@@ -4268,6 +4268,16 @@ html[data-reduce-effects="true"] ::-webkit-scrollbar-track{
    Body class is applied just before window.print() and removed after.
    ══════════════════════════════════════════════════════════════ */
 
+/* ─── ON-SCREEN FIX : Reports page uses #print-area full width ──
+   The invoice/statement views need #print-area capped at 800px
+   (paper width). The Reports page reuses the same #print-area
+   container but should fill the content width instead. */
+#print-area:has(.report-header){
+  max-width: 100%;
+  margin: 0;
+  border-radius: var(--r-lg);
+}
+
 /* ─── PAGE SETUP ──────────────────────────────────────────── */
 @media print{
 
@@ -12675,8 +12685,12 @@ function renderNewInvoice(content, partyType, preselectPartyId){
       defaultUnit = p.unit || 'piece';
     }
 
-    /* Default price: tier-specific */
-    const price = Number(p[priceField]) || 0;
+       /* Fix: if the default unit is the pack unit, price = pack price */
+    const basePrice = Number(p[priceField]) || 0;
+    const isPackDefault = p.dual && (defaultUnit === p.pack_unit);
+    const price = isPackDefault
+      ? round2(basePrice * (Number(p.pack_size) || 1))
+      : basePrice;
 
     lines.push({
       product_id:   p.id,
