@@ -12684,55 +12684,43 @@ function renderNewInvoice(content, partyType, preselectPartyId){
   /* ══════════════════════════════════════════════════════
      LINE MANAGEMENT
      ══════════════════════════════════════════════════════ */
-/* Bulletproof price picker for dual products:
-   if the chosen unit is the pack unit, multiply base price × pack size */
-function priceForUnit(p, unit){
-  const base = Number(p[priceField]) || 0;
-  if(p.dual && unit === p.pack_unit && p.pack_unit){
-    return round2(base * (Number(p.pack_size) || 1));
-  }
-  return base;
-}
-  /* Bulletproof price picker for dual products:
-   if the chosen unit is the pack unit, multiply base price × pack size */
-function priceForUnit(p, unit){
-  const base = Number(p[priceField]) || 0;
-  if(p.dual && p.pack_unit && unit === p.pack_unit){
-    return round2(base * (Number(p.pack_size) || 1));
-  }
-  return base;
-}
 
-function addLine(p){
-  /* Default unit: pack if dual product's primary is pack, else base */
-  let defaultUnit;
-  if(p.dual){
-    defaultUnit = (p.primary_unit === 'pack_unit' && p.pack_unit)
-      ? p.pack_unit
-      : (p.base_unit || 'piece');
-  } else {
-    defaultUnit = p.unit || 'piece';
+  /* Price for the chosen unit — base price × pack size when unit is the pack unit */
+  function priceForUnit(p, unit){
+    const base = Number(p[priceField]) || 0;
+    if(p.dual && p.pack_unit && unit === p.pack_unit){
+      return round2(base * (Number(p.pack_size) || 1));
+    }
+    return base;
   }
 
-  /* Price for the chosen default unit */
-  const price = priceForUnit(p, defaultUnit);
+  function addLine(p){
+    let defaultUnit;
+    if(p.dual){
+      defaultUnit = (p.primary_unit === 'pack_unit' && p.pack_unit)
+        ? p.pack_unit
+        : (p.base_unit || 'piece');
+    } else {
+      defaultUnit = p.unit || 'piece';
+    }
 
-  lines.push({
-    product_id:   p.id,
-    product_name: p.name,
-    dual:         !!p.dual,
-    base_unit:    p.base_unit || null,
-    pack_unit:    p.pack_unit || null,
-    pack_size:    Number(p.pack_size) || 1,
-    unit:         defaultUnit,
-    qty:          1,
-    price:        price,
-    total:        price
-  });
+    const price = priceForUnit(p, defaultUnit);
 
-  renderLines();
-}
+    lines.push({
+      product_id:   p.id,
+      product_name: p.name,
+      dual:         !!p.dual,
+      base_unit:    p.base_unit || null,
+      pack_unit:    p.pack_unit || null,
+      pack_size:    Number(p.pack_size) || 1,
+      unit:         defaultUnit,
+      qty:          1,
+      price:        price,
+      total:        price
+    });
 
+    renderLines();
+  }
   function renderLines(){
     const box = $('#ni-lines');
     if(!box) return;
@@ -14423,19 +14411,15 @@ function openPurchaseBillForm(supplier, existing){
         inp.addEventListener('blur', () => renderLines());
       });
 
-      /* Wire unit selector */
+           /* Wire unit selector */
       box.querySelectorAll('select[data-i]').forEach(sel => {
-  sel.onchange = (e) => {
-    const i = +e.target.dataset.i;
-    lines[i].unit = e.target.value;
-    const p = DB.products.find(x => x.id === lines[i].product_id);
-    if(p){
-      lines[i].price = priceForUnit(p, lines[i].unit);
-      lines[i].total = round2(Number(lines[i].qty || 0) * Number(lines[i].price || 0));
-    }
-    renderLines();
-  };
-});
+        sel.onchange = (e) => {
+          const i = +e.target.dataset.i;
+          billLines[i].unit = e.target.value;
+          /* Cost stays per base unit — only qty display changes. */
+          renderLines();
+        };
+      });
 
       updateSummary();
     }
@@ -14577,10 +14561,10 @@ function openPurchaseBillForm(supplier, existing){
           return;
         }
 
-        /* 5. Apply new stock */
-        for(const l of billLines){
-          await adjustStock(l.product_id, Number(l.qty));
-        }
+              /* Apply stock — convert to base units when the unit is the pack */
+      for(const l of billLines){
+        await adjustStock(l.product_id, lineDeductBaseQty(l));
+      }
 
         await syncDB();
         toast('Bill updated — stock adjusted', 'success');
@@ -14612,9 +14596,9 @@ function openPurchaseBillForm(supplier, existing){
         return;
       }
 
-      /* Apply stock */
+            /* Apply stock — convert to base units when the unit is the pack */
       for(const l of billLines){
-        await adjustStock(l.product_id, Number(l.qty));
+        await adjustStock(l.product_id, lineDeductBaseQty(l));
       }
 
       await syncDB();
