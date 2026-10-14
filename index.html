@@ -23181,6 +23181,15 @@ renderNewInvoice = function(content, partyType, preselectPartyId){
      LINES
      ══════════════════════════════════════════════════════ */
 
+  // ✅ FIX: Added missing priceForUnit helper function
+  function priceForUnit(p, unit){
+    const base = Number(p[priceField]) || 0;
+    if(p.dual && p.pack_unit && unit === p.pack_unit){
+      return round2(base * (Number(p.pack_size) || 1));
+    }
+    return base;
+  }
+
   function addLine(p){
     let defaultUnit;
     if(p.dual){
@@ -23191,6 +23200,8 @@ renderNewInvoice = function(content, partyType, preselectPartyId){
       defaultUnit = p.unit || 'piece';
     }
 
+    // ✅ FIX: Defined the missing 'price' variable
+    const price = priceForUnit(p, defaultUnit);
 
     lines.push({
       product_id:   p.id,
@@ -23275,7 +23286,7 @@ renderNewInvoice = function(content, partyType, preselectPartyId){
       </div>
     `;
 
-        box.querySelectorAll('select[data-i]').forEach(sel => {
+    box.querySelectorAll('select[data-i]').forEach(sel => {
       sel.onchange = (e) => {
         const i = +e.target.dataset.i;
         lines[i].unit = e.target.value;
@@ -23287,7 +23298,6 @@ renderNewInvoice = function(content, partyType, preselectPartyId){
         renderLines();
       };
     });
-    
 
     box.querySelectorAll('[data-del]').forEach(b => {
       b.onclick = () => {
