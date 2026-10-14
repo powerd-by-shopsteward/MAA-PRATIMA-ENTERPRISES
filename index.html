@@ -12694,6 +12694,15 @@ function renderNewInvoice(content, partyType, preselectPartyId){
     return base;
   }
 
+    /* Price for the chosen unit — base price × pack size when unit is the pack unit */
+  function priceForUnit(p, unit){
+    const base = Number(p[priceField]) || 0;
+    if(p.dual && p.pack_unit && unit === p.pack_unit){
+      return round2(base * (Number(p.pack_size) || 1));
+    }
+    return base;
+  }
+
   function addLine(p){
     let defaultUnit;
     if(p.dual){
@@ -23266,35 +23275,19 @@ renderNewInvoice = function(content, partyType, preselectPartyId){
       </div>
     `;
 
-    box.querySelectorAll('input[data-i]').forEach(inp => {
-      inp.addEventListener('input', (e) => {
-        const i = +e.target.dataset.i;
-        const f = e.target.dataset.f;
-        lines[i][f] = Number(e.target.value) || 0;
-        lines[i].total = Number(lines[i].qty || 0) * Number(lines[i].price || 0);
-        const totalCell = e.target.closest('tr').querySelector('td:nth-last-child(2)');
-        if(totalCell) totalCell.textContent = rs(lines[i].total);
-        updateSummary();
-      });
-      inp.addEventListener('blur', () => renderLines());
-    });
-
-    box.querySelectorAll('select[data-i]').forEach(sel => {
+        box.querySelectorAll('select[data-i]').forEach(sel => {
       sel.onchange = (e) => {
         const i = +e.target.dataset.i;
         lines[i].unit = e.target.value;
         const p = DB.products.find(x => x.id === lines[i].product_id);
         if(p){
-          if(lines[i].dual && lines[i].unit === lines[i].pack_unit){
-            lines[i].price = round2((Number(p[priceField]) || 0) * (Number(p.pack_size) || 1));
-          } else {
-            lines[i].price = Number(p[priceField]) || 0;
-          }
+          lines[i].price = priceForUnit(p, lines[i].unit);
           lines[i].total = round2(Number(lines[i].qty || 0) * Number(lines[i].price || 0));
         }
         renderLines();
       };
     });
+    
 
     box.querySelectorAll('[data-del]').forEach(b => {
       b.onclick = () => {
