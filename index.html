@@ -23985,19 +23985,9 @@ exportInvoicesCSV = function(rows){
   };
 })();
 </script>
-/* ══════════════════════════════════════════════════════════════
-   END BLOCK 51
-   ══════════════════════════════════════════════════════════════ */
 <!-- ══════════════════════════════════════════════════════════════════════
      BLOCK 52 — SUBSCRIPTION SYSTEM
-     ──────────────────────────────────────────────────────────────────────
      All-in-one subscription module for Stationery Hub.
-     Contains: Config · Core · UI (pill + banner + slide-in) · Card · Modals · Guards
-
-     To remove entirely: delete from this START marker down to the
-                         END marker at the bottom of this block.
-
-     To change pricing / UPI / support contact: edit PART A only.
      ══════════════════════════════════════════════════════════════════════ -->
 
 <script>
@@ -24048,15 +24038,8 @@ window.SUBSCRIPTION_CONFIG = {
   window.SUB_ACCENT_WARN      = ACCENT_WARN;
   window.SUB_ACCENT_DANGER    = ACCENT_DANGER;
 
-  window.SUB = {
-    loaded: false,
-    active: false,
-    expires_at: null,
-    last_paid_at: null,
-    amount: PLAN_AMOUNT
-  };
+  window.SUB = { loaded:false, active:false, expires_at:null, last_paid_at:null, amount:PLAN_AMOUNT };
 
-  /* ─── Time helpers ─────────────────────────────────────────── */
   window.subDaysLeft = function () {
     if (!SUB.expires_at) return 0;
     return Math.max(0, Math.ceil((new Date(SUB.expires_at).getTime() - Date.now()) / 86400000));
@@ -24070,15 +24053,11 @@ window.SUBSCRIPTION_CONFIG = {
     if (!SUB.expires_at) return 0;
     return Math.max(0, Math.ceil((Date.now() - new Date(SUB.expires_at).getTime()) / 86400000));
   };
-
-  /* ─── Status helpers ───────────────────────────────────────── */
   window.isSubActive = function () {
     if (!SUB.loaded) return true;
     return !!(SUB.active && SUB.expires_at && new Date(SUB.expires_at).getTime() > Date.now());
   };
-  window.isSubExpiringSoon = function () {
-    return isSubActive() && subDaysLeft() <= REMINDER_DAYS;
-  };
+  window.isSubExpiringSoon = function () { return isSubActive() && subDaysLeft() <= REMINDER_DAYS; };
   window.isSubExpired = function () { return !isSubActive(); };
   window.subStatusColor = function () {
     if (isSubExpired()) return ACCENT_DANGER;
@@ -24091,7 +24070,6 @@ window.SUBSCRIPTION_CONFIG = {
     return 'Active';
   };
 
-  /* ─── Load row from Supabase ───────────────────────────────── */
   window.loadSubscription = async function () {
     try {
       if (typeof sb === 'undefined') throw new Error('Supabase client not available');
@@ -24100,33 +24078,23 @@ window.SUBSCRIPTION_CONFIG = {
 
       if (data) {
         Object.assign(SUB, {
-          loaded: true,
-          active: !!data.active,
-          expires_at: data.expires_at,
-          last_paid_at: data.last_paid_at,
-          amount: data.amount
+          loaded:true, active:!!data.active,
+          expires_at: data.expires_at, last_paid_at: data.last_paid_at, amount: data.amount
         });
       } else if (AUTO_CREATE) {
         const now = new Date();
-        const nextYear = new Date(now);
-        nextYear.setFullYear(nextYear.getFullYear() + 1);
+        const nextYear = new Date(now); nextYear.setFullYear(nextYear.getFullYear() + 1);
         const { data: created, error: cErr } = await sb.from('subscriptions').insert({
-          id: 1, active: true,
-          started_at: now.toISOString(),
-          expires_at: nextYear.toISOString(),
-          last_paid_at: now.toISOString(),
-          amount: PLAN_AMOUNT,
-          notes: 'Auto-created on first login'
+          id:1, active:true, started_at: now.toISOString(),
+          expires_at: nextYear.toISOString(), last_paid_at: now.toISOString(),
+          amount: PLAN_AMOUNT, notes: 'Auto-created'
         }).select().single();
         if (cErr) throw cErr;
         Object.assign(SUB, {
-          loaded: true, active: true,
-          expires_at: created.expires_at,
-          last_paid_at: created.last_paid_at,
-          amount: created.amount
+          loaded:true, active:true,
+          expires_at: created.expires_at, last_paid_at: created.last_paid_at, amount: created.amount
         });
       } else {
-        /* Row missing and autoCreate off — treat as fresh/unknown, fail-open */
         SUB.loaded = true;
         SUB.active = true;
         SUB.expires_at = new Date(Date.now() + 365 * 86400000).toISOString();
@@ -24139,24 +24107,20 @@ window.SUBSCRIPTION_CONFIG = {
     }
   };
 
-  /* ─── WhatsApp link helper ─────────────────────────────────── */
   window.waLink = function (phone, text) {
     return 'https://wa.me/' + String(phone).replace(/\D/g, '') + '?text=' + encodeURIComponent(text || '');
   };
 })();
 
 /* ════════════════════════════════════════════════════════════════════
-   BLOCK 52 · PART C — UI
-   Sidebar pill + top banner + slide-in reminder.
+   BLOCK 52 · PART C — UI (pill + banner + slide-in)
    ════════════════════════════════════════════════════════════════════ */
 (function () {
   'use strict';
 
-  /* ─── Sidebar pill ─────────────────────────────────────────── */
   window.renderSubSidebarPill = function () {
     const sidebar = document.querySelector('.sidebar');
     if (!sidebar) return;
-
     let pill = document.getElementById('sub-sidebar-pill');
     if (!pill) {
       pill = document.createElement('a');
@@ -24164,18 +24128,14 @@ window.SUBSCRIPTION_CONFIG = {
       pill.href = '#/myshop';
       pill.style.cssText = 'display:block;margin-top:8px;margin-bottom:6px;padding:10px 12px;border-radius:10px;background:var(--primary-soft);border:1px solid var(--primary-tint);text-decoration:none;';
       const calcBtn = document.getElementById('btn-calc');
-      if (calcBtn) sidebar.insertBefore(pill, calcBtn);
-      else sidebar.appendChild(pill);
+      if (calcBtn) sidebar.insertBefore(pill, calcBtn); else sidebar.appendChild(pill);
     }
-
     if (!window.SUB || !SUB.loaded) { pill.style.display = 'none'; return; }
     pill.style.display = 'block';
-
     const color = subStatusColor();
     const pct   = subPercentLeft();
     const days  = subDaysLeft();
     const label = days > 0 ? days + 'd' : 'Expired';
-
     pill.innerHTML =
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">' +
         '<div style="display:flex;align-items:center;gap:6px;">' +
@@ -24190,11 +24150,9 @@ window.SUBSCRIPTION_CONFIG = {
       '<div style="font-size:9px;color:var(--ink-3);margin-top:5px;">' + subStatusLabel() + '</div>';
   };
 
-  /* ─── Top warning banner ───────────────────────────────────── */
   window.renderSubTopBanner = function () {
     const main = document.querySelector('.main');
     if (!main) return;
-
     const old = document.getElementById('sub-top-banner');
     if (old) old.remove();
     if (!window.SUB || !SUB.loaded) return;
@@ -24204,7 +24162,6 @@ window.SUBSCRIPTION_CONFIG = {
     const pct     = subPercentLeft();
     const days    = subDaysLeft();
     const overdue = subDaysOverdue();
-
     const barColor  = expired ? SUB_ACCENT_DANGER : SUB_ACCENT_WARN;
     const textColor = expired ? '#7f1d1d' : '#78350f';
     const bg        = expired ? 'var(--red-bg)'     : 'var(--amber-bg)';
@@ -24224,14 +24181,11 @@ window.SUBSCRIPTION_CONFIG = {
         '</div>' +
         '<div style="font-size:11px;font-weight:600;color:' + textColor + ';white-space:nowrap;">' + (expired ? overdue + ' days overdue' : days + ' days left') + '</div>' +
       '</div>';
-
     main.insertBefore(banner, main.firstChild);
-
     const btn = banner.querySelector('#sub-banner-renew');
     if (btn) btn.onclick = function () { openSubscriptionModal(); };
   };
 
-  /* ─── Slide-in reminder (≤ 15 days, once per day) ──────────── */
   window.maybeShowExpiryReminder = function () {
     if (!window.SUB || !SUB.loaded) return;
     if (isSubExpired()) return;
@@ -24274,37 +24228,26 @@ window.SUBSCRIPTION_CONFIG = {
       slide.style.transform = 'translateX(120%)';
       setTimeout(function () { slide.remove(); }, 400);
     }
-
-    slide.querySelector('#sub-slide-renew').onclick = function () {
-      dismiss();
-      openSubscriptionModal();
-    };
+    slide.querySelector('#sub-slide-renew').onclick = function () { dismiss(); openSubscriptionModal(); };
     slide.querySelector('#sub-slide-dismiss').onclick = dismiss;
-
-    setTimeout(function () {
-      if (document.getElementById('sub-expiry-slide')) dismiss();
-    }, 15000);
+    setTimeout(function () { if (document.getElementById('sub-expiry-slide')) dismiss(); }, 15000);
   };
 
-  /* ─── Orchestrator ─────────────────────────────────────────── */
   window.updateSubscriptionUI = function () {
-    try { renderSubSidebarPill();       } catch (e) {}
-    try { renderSubTopBanner();         } catch (e) {}
-    try { maybeShowExpiryReminder();    } catch (e) {}
+    try { renderSubSidebarPill();    } catch (e) {}
+    try { renderSubTopBanner();      } catch (e) {}
+    try { maybeShowExpiryReminder(); } catch (e) {}
   };
 
-  /* ─── Hook into renderLayout ───────────────────────────────── */
   const _origLayout = window.renderLayout;
   if (typeof _origLayout === 'function') {
     window.renderLayout = function () {
       _origLayout.apply(this, arguments);
       try { renderSubSidebarPill(); renderSubTopBanner(); } catch (e) {}
-      /* defer slide-in so layout is painted first */
       setTimeout(function () { try { maybeShowExpiryReminder(); } catch (e) {} }, 400);
     };
   }
 
-  /* ─── Hook into route ──────────────────────────────────────── */
   const _origRoute = window.route;
   if (typeof _origRoute === 'function') {
     window.route = async function () {
@@ -24316,9 +24259,7 @@ window.SUBSCRIPTION_CONFIG = {
     window.addEventListener('hashchange', window.route);
   }
 
-  setInterval(function () {
-    if (window.SUB && SUB.loaded) updateSubscriptionUI();
-  }, 60000);
+  setInterval(function () { if (window.SUB && SUB.loaded) updateSubscriptionUI(); }, 60000);
 })();
 
 /* ════════════════════════════════════════════════════════════════════
@@ -24327,7 +24268,6 @@ window.SUBSCRIPTION_CONFIG = {
 (function () {
   'use strict';
 
-  /* ─── UPI / QR helpers ─────────────────────────────────────── */
   function buildUpiString(amount, note) {
     const amt = Number(amount).toFixed(2);
     const tn  = encodeURIComponent((note || 'Subscription').substring(0, 50));
@@ -24347,7 +24287,6 @@ window.SUBSCRIPTION_CONFIG = {
     imgEl.onerror = function () { if (idx < urls.length) imgEl.src = urls[idx++]; };
   }
 
-  /* ─── My Shop card ─────────────────────────────────────────── */
   function buildSubCardHTML() {
     const pct          = subPercentLeft();
     const days         = subDaysLeft();
@@ -24356,9 +24295,8 @@ window.SUBSCRIPTION_CONFIG = {
     const expired      = isSubExpired();
     const overdue      = subDaysOverdue();
     const expiringSoon = isSubExpiringSoon();
-    const expiresStr   = SUB.expires_at ? fmtDate(SUB.expires_at) : '—';
+    const expiresStr   = SUB.expires_at ? fmtDate(SUB.expires_at) : '-';
     const lastPaidStr  = SUB.last_paid_at ? fmtDate(SUB.last_paid_at) : 'First activation';
-
     const c    = 2 * Math.PI * 32;
     const dash = (pct / 100) * c;
 
@@ -24399,7 +24337,6 @@ window.SUBSCRIPTION_CONFIG = {
       '</div>';
   }
 
-  /* ─── Hook into renderMyShop ───────────────────────────────── */
   const _origMyShop = window.renderMyShop;
   if (typeof _origMyShop === 'function') {
     window.renderMyShop = function (content) {
@@ -24407,17 +24344,13 @@ window.SUBSCRIPTION_CONFIG = {
       try {
         const old = content.querySelector('#sub-card-root');
         if (old) old.remove();
-
         const wrap = document.createElement('div');
         wrap.innerHTML = buildSubCardHTML();
         content.insertBefore(wrap.firstElementChild, content.firstChild);
-
         const mainBtn = content.querySelector('#sub-main-btn');
         if (mainBtn) mainBtn.onclick = function () { openSubscriptionModal(); };
-
         const mgBtn = content.querySelector('#sub-manage-btn');
         if (mgBtn) mgBtn.onclick = function () { openSubscriptionManageModal(); };
-
         const sLink = content.querySelector('#sub-support-link');
         if (sLink) sLink.href = waLink(SUB_SUPPORT_WHATSAPP,
           'Hi, I need help with my subscription.\nShop: ' +
@@ -24426,7 +24359,6 @@ window.SUBSCRIPTION_CONFIG = {
     };
   }
 
-  /* ─── MODAL A: Subscribe / Renew ───────────────────────────── */
   window.openSubscriptionModal = function () {
     const shopName = (typeof SETTINGS !== 'undefined' && SETTINGS.shop_name) || 'Shop';
     const str      = buildUpiString(SUB_PLAN_AMOUNT, 'Subscription renewal - ' + shopName);
@@ -24478,9 +24410,8 @@ window.SUBSCRIPTION_CONFIG = {
     );
   };
 
-  /* ─── MODAL B: Manage ──────────────────────────────────────── */
   window.openSubscriptionManageModal = function () {
-    const expiresStr  = SUB.expires_at ? fmtDate(SUB.expires_at) : '—';
+    const expiresStr  = SUB.expires_at ? fmtDate(SUB.expires_at) : '-';
     const lastPaidStr = SUB.last_paid_at ? fmtDate(SUB.last_paid_at) : 'First activation';
     const days        = subDaysLeft();
     const shopName    = (typeof SETTINGS !== 'undefined' && SETTINGS.shop_name) || '';
@@ -24508,7 +24439,6 @@ window.SUBSCRIPTION_CONFIG = {
     );
   };
 
-  /* ─── MODAL C: Expired (blocking) ──────────────────────────── */
   window.openSubscriptionExpiredModal = function () {
     const overdue  = subDaysOverdue();
     const shopName = (typeof SETTINGS !== 'undefined' && SETTINGS.shop_name) || 'Shop';
@@ -24547,7 +24477,7 @@ window.SUBSCRIPTION_CONFIG = {
         '<div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);text-align:center;font-size:12px;color:var(--ink-3);line-height:1.9;">' +
           '<div style="color:var(--red);font-weight:600;margin-bottom:4px;">⚠ Overdue by ' + overdue + ' day' + (overdue === 1 ? '' : 's') + '</div>' +
           '<div>✉ <a href="mailto:' + esc(SUB_SUPPORT_EMAIL) + '" style="color:var(--primary-hover);">' + esc(SUB_SUPPORT_EMAIL) + '</a></div>' +
-          '<div style="font-size:11px;color:var(--ink-4);margin-top:6px;">Your existing data is safe. It just won\\'t update until you renew.</div>' +
+          '<div style="font-size:11px;color:var(--ink-4);margin-top:6px;">Your existing data is safe. It just won\'t update until you renew.</div>' +
         '</div>' +
       '</div>',
       function (root) {
@@ -24564,18 +24494,10 @@ window.SUBSCRIPTION_CONFIG = {
     );
   };
 
-  /* ─── GUARD: wrap create/edit functions ────────────────────── */
   const GUARDED = [
-    'openPartyForm',
-    'openProductForm',
-    'openQuickProductForm',
-    'openRestockForm',
-    'openSupplierForm',
-    'openSupplierPaymentForm',
-    'openPartyPaymentForm',
-    'openPurchaseBillForm',
-    'openExpenseForm',
-    'openSaveWalkinModal'
+    'openPartyForm', 'openProductForm', 'openQuickProductForm', 'openRestockForm',
+    'openSupplierForm', 'openSupplierPaymentForm', 'openPartyPaymentForm',
+    'openPurchaseBillForm', 'openExpenseForm', 'openSaveWalkinModal'
   ];
   GUARDED.forEach(function (name) {
     const orig = window[name];
@@ -24587,7 +24509,6 @@ window.SUBSCRIPTION_CONFIG = {
     }
   });
 
-  /* ─── GUARD: intercept clicks on destructive / create buttons ─ */
   document.addEventListener('click', function (e) {
     if (isSubActive()) return;
     const t = e.target.closest(
@@ -24604,7 +24525,6 @@ window.SUBSCRIPTION_CONFIG = {
     }
   }, true);
 
-  /* ─── BOOT: wait for owner to be logged in, then load sub ──── */
   let tries = 0;
   const wait = setInterval(async function () {
     tries++;
