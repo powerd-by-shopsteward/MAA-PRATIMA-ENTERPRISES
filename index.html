@@ -22900,7 +22900,28 @@ renderNewInvoice = function(content, partyType, preselectPartyId){
         </table>
       </div>
     `;
+    /* ✅ FIX: wire up Qty and Price inputs so the row total
+       and the summary recompute as the user types. */
+    box.querySelectorAll('input[data-i]').forEach(inp => {
+      inp.addEventListener('input', (e) => {
+        const i = +e.target.dataset.i;
+        const f = e.target.dataset.f;
+        const v = Number(e.target.value) || 0;
 
+        lines[i][f] = v;
+        lines[i].total = round2(Number(lines[i].qty || 0) * Number(lines[i].price || 0));
+
+        /* Update only the row's Total cell — full re-render would
+           steal focus from the input the user is typing in. */
+        const totalCell = e.target.closest('tr').querySelector('td:nth-last-child(2)');
+        if(totalCell) totalCell.textContent = rs(lines[i].total);
+
+        updateSummary();
+      });
+
+      /* On blur, do a clean re-render so everything is consistent. */
+      inp.addEventListener('blur', () => renderLines());
+    });
     box.querySelectorAll('select[data-i]').forEach(sel => {
       sel.onchange = (e) => {
         const i = +e.target.dataset.i;
