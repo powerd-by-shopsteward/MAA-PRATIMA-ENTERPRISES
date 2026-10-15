@@ -5449,15 +5449,17 @@ function lineDeductBaseQty(line){
 }
 
 /* ══════════════════════════════════════════════════════════════
-   14k — PARTY STATS
-   Total billed / total paid / due for a customer or retailer.
+   14k — PARTY STATS (Updated with Opening Balance)
    ══════════════════════════════════════════════════════════════ */
-
 function partyStats(partyId, partyType){
+  const table = partyType === 'retailer' ? 'retailers' : 'customers';
+  const party = (DB[table] || []).find(x => x.id === partyId);
+  const opening = Number(party?.opening_balance || 0);
+
   const invs = DB.invoices.filter(i => i.party_id === partyId && i.party_type === partyType);
   const pays = DB.payments.filter(p => p.party_id === partyId && p.party_type === partyType);
 
-  const total_billed = invs.reduce((s, i) => s + Number(i.total || 0), 0);
+  const total_billed = opening + invs.reduce((s, i) => s + Number(i.total || 0), 0);
   const invoice_paid = invs.reduce((s, i) => s + Number(i.paid  || 0), 0);
   const extra_paid   = pays.reduce((s, p) => s + Number(p.amount || 0), 0);
   const total_paid   = invoice_paid + extra_paid;
@@ -9862,12 +9864,8 @@ function renderCustomers(content){
 }
 
 /* ══════════════════════════════════════════════════════════════
-   25c — SHARED PARTY FORM
-   Used by both Customers (Block 25) and Retailers (Block 26).
-   type = 'customer' | 'retailer'
-   existing = row to edit, or null for create
+   25c — SHARED PARTY FORM (Updated with Opening Balance)
    ══════════════════════════════════════════════════════════════ */
-
 function openPartyForm(type, existing){
   const isRetailer = type === 'retailer';
   const table      = isRetailer ? 'retailers' : 'customers';
@@ -9878,6 +9876,7 @@ function openPartyForm(type, existing){
     name: '',
     phone: '',
     address: '',
+    opening_balance: 0, // NEW: Default value
     joined_date: todayStr(),
     tx_time: ''
   };
@@ -9889,41 +9888,30 @@ function openPartyForm(type, existing){
     <form id="pf" class="modal-body" novalidate>
       <div class="field">
         <label class="label">${label} name <span class="req">*</span></label>
-        <input
-          class="input"
-          type="text"
-          name="name"
-          maxlength="80"
-          required
+        <input class="input" type="text" name="name" maxlength="80" required
           value="${esc(p.name || '')}"
-          placeholder="${isRetailer ? 'e.g. Sharma Stationery' : 'e.g. Ramesh Kumar'}"
-          autofocus
-        >
+          placeholder="${isRetailer ? 'e.g. Sharma Stationery' : 'e.g. Ramesh Kumar'}" autofocus>
       </div>
 
       <div class="form-row-2">
         <div class="field">
           <label class="label">Phone</label>
-          <input
-            class="input"
-            type="tel"
-            name="phone"
-            maxlength="20"
-            value="${esc(p.phone || '')}"
-            placeholder="10-digit number"
-          >
+          <input class="input" type="tel" name="phone" maxlength="20"
+            value="${esc(p.phone || '')}" placeholder="10-digit number">
         </div>
         <div class="field">
           <label class="label">Address</label>
-          <input
-            class="input"
-            type="text"
-            name="address"
-            maxlength="140"
-            value="${esc(p.address || '')}"
-            placeholder="Area, city (optional)"
-          >
+          <input class="input" type="text" name="address" maxlength="140"
+            value="${esc(p.address || '')}" placeholder="Area, city (optional)">
         </div>
+      </div>
+
+      <!-- NEW: Opening Balance Field -->
+      <div class="field">
+        <label class="label">Opening Balance (Old Due) ₹</label>
+        <input class="input" type="number" step="any" name="opening_balance"
+          value="${p.opening_balance || 0}" placeholder="0.00">
+        <div class="field-hint">Amount already owed by this ${label.toLowerCase()} before using this app.</div>
       </div>
 
       ${dateTimeFieldHTML(p.joined_date || todayStr(), p.tx_time || '', dateLabel)}
@@ -9943,15 +9931,9 @@ function openPartyForm(type, existing){
 
     form.onsubmit = async (e) => {
       e.preventDefault();
-
       const nameEl = form.querySelector('input[name="name"]');
       const name   = (nameEl.value || '').trim();
-
-      if(!name){
-        toast('Please enter a name', 'error');
-        nameEl.focus();
-        return;
-      }
+      if(!name){ toast('Please enter a name', 'error'); nameEl.focus(); return; }
 
       const dt = readDateTime(form);
       if(!dt) return;
@@ -9961,6 +9943,7 @@ function openPartyForm(type, existing){
         name,
         phone:       (fd.get('phone')   || '').trim(),
         address:     (fd.get('address') || '').trim(),
+        opening_balance: Number(fd.get('opening_balance')) || 0, // NEW
         joined_date: dt.date,
         tx_time:     dt.time
       };
@@ -9982,20 +9965,12 @@ function openPartyForm(type, existing){
         return;
       }
 
-      /* Update local DB instantly */
-      if(existing){
-        dbUpsertLocal(table, res.data);
-      } else {
-        DB[table] = [res.data, ...(DB[table] || [])];
-      }
+      if(existing) dbUpsertLocal(table, res.data);
+      else DB[table] = [res.data, ...(DB[table] || [])];
 
       toast(label + (existing ? ' updated' : ' added'), 'success');
       closeModal(root);
-
-      /* Refresh the current page if we're on the party list */
-      if(location.hash === '#/customers' || location.hash === '#/retailers'){
-        route();
-      }
+      if(location.hash === '#/customers' || location.hash === '#/retailers'){ route(); }
     };
   });
 }
@@ -12538,12 +12513,8 @@ function openPartyPaymentForm(partyId, partyType){
    END BLOCK 29
    ══════════════════════════════════════════════════════════════ */
 /* ══════════════════════════════════════════════════════════════
-   BLOCK 30 — NEW INVOICE BUILDER
-   Shared invoice form for customers + retailers.
-   Auto-selects customer_price or wholesale_price per party type.
-   Supports dual-unit products with per-line unit switching.
+   30 — NEW INVOICE BUILDER (Fixed Dual-Unit Price & Delete Bug)
    ══════════════════════════════════════════════════════════════ */
-
 function renderNewInvoice(content, partyType, preselectPartyId){
   if(!content) return;
 
@@ -12555,70 +12526,39 @@ function renderNewInvoice(content, partyType, preselectPartyId){
   const backUrl    = isRetailer ? '#/retailers' : '#/customers';
   const parties    = isRetailer ? DB.retailers : DB.customers;
 
-  /* ─── Local line state ────────────────────────────────── */
   let lines = [];
 
   content.innerHTML = `
     <a href="${backUrl}" style="color:var(--ink-3);font-size:var(--fs-sm)">← Back to ${partyLabel}s</a>
-
     <div class="page-head" style="margin-top:8px">
-      <div>
-        <h1>New Invoice — ${partyLabel}</h1>
-        <p>
-          Prices auto-set to
-          <b style="color:${priceColor}">${priceLabel}</b>
-          tier — you can override per line.
-        </p>
-      </div>
+      <div><h1>New Invoice — ${partyLabel}</h1><p>Prices auto-set to <b style="color:${priceColor}">${priceLabel}</b> tier — you can override per line.</p></div>
     </div>
-
     <div class="card" style="display:flex;flex-direction:column;gap:16px">
       ${dateTimeFieldHTML(null, '', 'Invoice date')}
-
       <div class="field">
         <label class="label">${partyLabel} <span class="req">*</span></label>
         <div id="ni-party-mount"></div>
       </div>
-
       <div class="field">
         <label class="label">Add products</label>
         <div id="ni-prod-mount"></div>
-        <div class="field-hint">
-          Search by name, category, or unit. Press <kbd>Enter</kbd> to add the top match.
-        </div>
+        <div class="field-hint">Search by name, category, or unit.</div>
       </div>
-
       <div id="ni-lines"></div>
-
       ${SETTINGS.gst_enabled ? `
         <div style="padding:12px;background:var(--primary-soft);border-radius:var(--r-md);border:1px solid var(--primary-tint)">
           <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:var(--fs-sm)">
             <input type="checkbox" id="ni-gst" checked>
-            <span>
-              <b>Apply GST @ ${Number(SETTINGS.gst_rate) || 0}%</b>
-              ${SETTINGS.gst_number ? `<span style="color:var(--ink-3)"> · ${esc(SETTINGS.gst_number)}</span>` : ''}
-            </span>
+            <span><b>Apply GST @ ${Number(SETTINGS.gst_rate) || 0}%</b>${SETTINGS.gst_number ? ` · ${esc(SETTINGS.gst_number)}` : ''}</span>
           </label>
         </div>
       ` : ''}
-
       <div class="form-row-3">
-        <div class="field">
-          <label class="label">Discount (₹)</label>
-          <input class="input" type="number" step="any" min="0" id="ni-disc" value="0">
-        </div>
-        <div class="field">
-          <label class="label">Paid now (₹)</label>
-          <input class="input" type="number" step="any" min="0" id="ni-paid" value="0">
-        </div>
-        <div class="field">
-          <label class="label">Notes</label>
-          <input class="input" type="text" id="ni-notes" maxlength="200" placeholder="Optional">
-        </div>
+        <div class="field"><label class="label">Discount (₹)</label><input class="input" type="number" step="any" min="0" id="ni-disc" value="0"></div>
+        <div class="field"><label class="label">Paid now (₹)</label><input class="input" type="number" step="any" min="0" id="ni-paid" value="0"></div>
+        <div class="field"><label class="label">Notes</label><input class="input" type="text" id="ni-notes" maxlength="200" placeholder="Optional"></div>
       </div>
-
       <div id="ni-summary" style="background:var(--card-alt);padding:14px;border-radius:var(--r-md);border:1px solid var(--border);display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;font-size:var(--fs-sm)"></div>
-
       <div class="form-actions">
         <button type="button" class="btn btn-ghost" onclick="history.back()">Cancel</button>
         <button type="button" class="btn btn-ghost" id="ni-save-print">Save &amp; Print</button>
@@ -12627,20 +12567,13 @@ function renderNewInvoice(content, partyType, preselectPartyId){
     </div>
   `;
 
-  /* ══════════════════════════════════════════════════════
-     PARTY PICKER
-     ══════════════════════════════════════════════════════ */
-
   const partyMount = $('#ni-party-mount');
   partyMount.innerHTML = searchSelectHTML('ni-party-ss', 'Search by name or phone…');
-
   const partySS = mountSearchSelect($('#ni-party-ss'), {
     items: parties.map(p => partyToOption(p, partyType)),
     allowAdd: true,
     onAdd: () => {
-      /* Open the party form; on success, refresh the picker items */
       openPartyForm(partyType, null);
-      /* Watch for the modal closing then update items list */
       const check = setInterval(() => {
         if(!document.querySelector('#modal-root .modal-overlay')){
           clearInterval(check);
@@ -12649,52 +12582,24 @@ function renderNewInvoice(content, partyType, preselectPartyId){
       }, 300);
     }
   });
-
-  /* Preselect from URL */
-  if(preselectPartyId){
-    setTimeout(() => partySS.setValue(preselectPartyId), 120);
-  }
-
-  /* ══════════════════════════════════════════════════════
-     PRODUCT PICKER
-     ══════════════════════════════════════════════════════ */
+  if(preselectPartyId){ setTimeout(() => partySS.setValue(preselectPartyId), 120); }
 
   const prodMount = $('#ni-prod-mount');
   prodMount.innerHTML = searchSelectHTML('ni-prod-ss', 'Search products…');
-
   const prodSS = mountSearchSelect($('#ni-prod-ss'), {
     items: DB.products.map(productToOption),
     allowAdd: true,
-    onAdd: () => {
-      openProductForm(null, null, () => {
-        /* After add, refresh product option list */
-        prodSS.setItems(DB.products.map(productToOption));
-      });
-    },
+    onAdd: () => { openProductForm(null, null, () => { prodSS.setItems(DB.products.map(productToOption)); }); },
     onSelect: (opt) => {
       if(!opt) return;
       const p = DB.products.find(x => x.id === opt.id);
       if(!p) return;
       addLine(p);
-      /* Reset picker for next product */
       setTimeout(() => prodSS.reset(), 60);
     }
   });
 
-  /* ══════════════════════════════════════════════════════
-     LINE MANAGEMENT
-     ══════════════════════════════════════════════════════ */
-
-  /* Price for the chosen unit — base price × pack size when unit is the pack unit */
-  function priceForUnit(p, unit){
-    const base = Number(p[priceField]) || 0;
-    if(p.dual && p.pack_unit && unit === p.pack_unit){
-      return round2(base * (Number(p.pack_size) || 1));
-    }
-    return base;
-  }
-
-    /* Price for the chosen unit — base price × pack size when unit is the pack unit */
+  // ✅ FIX: Correctly handle price based on unit
   function priceForUnit(p, unit){
     const base = Number(p[priceField]) || 0;
     if(p.dual && p.pack_unit && unit === p.pack_unit){
@@ -12704,124 +12609,65 @@ function renderNewInvoice(content, partyType, preselectPartyId){
   }
 
   function addLine(p){
-    let defaultUnit;
-    if(p.dual){
-      defaultUnit = (p.primary_unit === 'pack_unit' && p.pack_unit)
-        ? p.pack_unit
-        : (p.base_unit || 'piece');
-    } else {
-      defaultUnit = p.unit || 'piece';
-    }
-
+    let defaultUnit = p.dual ? (p.primary_unit === 'pack_unit' && p.pack_unit ? p.pack_unit : (p.base_unit || 'piece')) : (p.unit || 'piece');
     const price = priceForUnit(p, defaultUnit);
-
     lines.push({
-      product_id:   p.id,
-      product_name: p.name,
-      dual:         !!p.dual,
-      base_unit:    p.base_unit || null,
-      pack_unit:    p.pack_unit || null,
-      pack_size:    Number(p.pack_size) || 1,
-      unit:         defaultUnit,
-      qty:          1,
-      price:        price,
-      total:        price
+      product_id: p.id, product_name: p.name, dual: !!p.dual,
+      base_unit: p.base_unit || null, pack_unit: p.pack_unit || null,
+      pack_size: Number(p.pack_size) || 1, unit: defaultUnit,
+      qty: 1, price: price, total: price
     });
-
     renderLines();
   }
+
   function renderLines(){
     const box = $('#ni-lines');
     if(!box) return;
-
     if(!lines.length){
-      box.innerHTML = `
-        <div style="padding:28px 16px;text-align:center;color:var(--ink-3);font-size:var(--fs-sm);background:var(--card-alt);border-radius:var(--r-md);border:1px dashed var(--border-strong)">
-          No items added yet. Search and add products above.
-        </div>
-      `;
-      updateSummary();
-      return;
+      box.innerHTML = '<div style="padding:28px;text-align:center;color:var(--ink-3);background:var(--card-alt);border-radius:var(--r-md);border:1px dashed var(--border-strong)">No items added yet.</div>';
+      updateSummary(); return;
     }
-
     box.innerHTML = `
-      <div class="tbl-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th style="width:32%">Item</th>
-              <th style="width:90px;text-align:right">Qty</th>
-              <th style="width:150px">Unit</th>
-              <th style="width:110px;text-align:right">Price ₹</th>
-              <th style="text-align:right">Total</th>
-              <th style="width:40px"></th>
-            </tr>
-          </thead>
-          <tbody>
-            ${lines.map((l, i) => {
-              const unitCell = l.dual
-                ? `<select class="input-inline unit" data-i="${i}" data-f="unit">
-                     <option value="${esc(l.pack_unit)}" ${l.unit === l.pack_unit ? 'selected' : ''}>
-                       ${esc(l.pack_unit)} (${fmtNum(l.pack_size)} ${esc(l.base_unit)})
-                     </option>
-                     <option value="${esc(l.base_unit)}" ${l.unit === l.base_unit ? 'selected' : ''}>
-                       ${esc(l.base_unit)}
-                     </option>
-                   </select>`
-                : `<span style="font-size:var(--fs-sm);color:var(--ink-3)">${esc(l.unit || '—')}</span>`;
-
-              return `
-                <tr>
-                  <td>
-                    <strong style="display:block;color:var(--ink)">${esc(l.product_name)}</strong>
-                    ${l.dual ? `<span style="font-size:var(--fs-xs);color:var(--ink-3)">${fmtNum(l.pack_size)} ${esc(l.base_unit)} / ${esc(l.pack_unit)}</span>` : ''}
-                  </td>
-                  <td>
-                    <input class="input-inline qty" type="number" step="any" min="0.01"
-                      data-i="${i}" data-f="qty" value="${l.qty}">
-                  </td>
-                  <td>${unitCell}</td>
-                  <td>
-                    <input class="input-inline price" type="number" step="any" min="0"
-                      data-i="${i}" data-f="price" value="${l.price}" placeholder="0.00">
-                  </td>
-                  <td style="text-align:right;font-weight:600;font-variant-numeric:tabular-nums">${rs(l.total)}</td>
-                  <td>
-                    <button class="btn btn-ghost btn-sm" type="button" data-del="${i}" style="color:var(--red)">✕</button>
-                  </td>
-                </tr>
-              `;
-            }).join('')}
-          </tbody>
-        </table>
-      </div>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th style="width:32%">Item</th><th style="width:90px;text-align:right">Qty</th><th style="width:150px">Unit</th><th style="width:110px;text-align:right">Price ₹</th><th style="text-align:right">Total</th><th style="width:40px"></th></tr></thead>
+        <tbody>
+          ${lines.map((l, i) => {
+            const unitCell = l.dual
+              ? `<select class="input-inline unit" data-i="${i}" data-f="unit">
+                   <option value="${esc(l.pack_unit)}" ${l.unit === l.pack_unit ? 'selected' : ''}>${esc(l.pack_unit)} (${fmtNum(l.pack_size)} ${esc(l.base_unit)})</option>
+                   <option value="${esc(l.base_unit)}" ${l.unit === l.base_unit ? 'selected' : ''}>${esc(l.base_unit)}</option>
+                 </select>`
+              : `<span style="font-size:var(--fs-sm);color:var(--ink-3)">${esc(l.unit || '—')}</span>`;
+            return `
+              <tr>
+                <td><strong>${esc(l.product_name)}</strong>${l.dual ? `<div style="font-size:var(--fs-xs);color:var(--ink-3)">${fmtNum(l.pack_size)} ${esc(l.base_unit)} / ${esc(l.pack_unit)}</div>` : ''}</td>
+                <td><input class="input-inline qty" type="number" step="any" min="0.01" data-i="${i}" data-f="qty" value="${l.qty}"></td>
+                <td>${unitCell}</td>
+                <td><input class="input-inline price" type="number" step="any" min="0" data-i="${i}" data-f="price" value="${l.price}" placeholder="0.00"></td>
+                <td style="text-align:right;font-weight:600;">${rs(l.total)}</td>
+                <td><button class="btn btn-ghost btn-sm" type="button" data-del="${i}" style="color:var(--red)">✕</button></td>
+              </tr>`;
+          }).join('')}
+        </tbody>
+      </table></div>
     `;
 
-    /* Wire qty / price inputs */
     $$('input[data-i]', box).forEach(inp => {
       inp.addEventListener('input', (e) => {
-        const i = +e.target.dataset.i;
-        const f = e.target.dataset.f;
-        const v = Number(e.target.value) || 0;
+        const i = +e.target.dataset.i; const f = e.target.dataset.f; const v = Number(e.target.value) || 0;
         lines[i][f] = v;
         lines[i].total = Number(lines[i].qty || 0) * Number(lines[i].price || 0);
-        /* Only re-render the total cell to keep focus */
         const totalCell = e.target.closest('tr').querySelector('td:nth-last-child(2)');
         if(totalCell) totalCell.textContent = rs(lines[i].total);
         updateSummary();
       });
-      inp.addEventListener('blur', () => {
-        /* Full re-render to normalize display */
-        renderLines();
-      });
+      inp.addEventListener('blur', () => renderLines());
     });
 
-    /* Wire unit selectors */
     $$('select[data-i]', box).forEach(sel => {
       sel.onchange = (e) => {
         const i = +e.target.dataset.i;
         lines[i].unit = e.target.value;
-        /* Reset price to the tier price for the selected unit */
         const p = DB.products.find(x => x.id === lines[i].product_id);
         if(p){
           lines[i].price = priceForUnit(p, lines[i].unit);
@@ -12831,25 +12677,20 @@ function renderNewInvoice(content, partyType, preselectPartyId){
       };
     });
 
-    /* Wire delete */
+    // ✅ FIX: Use onmousedown instead of onclick to fire before blur
     $$('[data-del]', box).forEach(b => {
-      b.onclick = () => {
+      b.onmousedown = (e) => {
+        e.preventDefault();
         lines.splice(+b.dataset.del, 1);
         renderLines();
       };
     });
-
     updateSummary();
   }
-
-  /* ══════════════════════════════════════════════════════
-     SUMMARY
-     ══════════════════════════════════════════════════════ */
 
   function updateSummary(){
     const sumEl = $('#ni-summary');
     if(!sumEl) return;
-
     const sub = lines.reduce((s, l) => s + Number(l.total || 0), 0);
     const disc = Number($('#ni-disc').value) || 0;
     const gstOn = SETTINGS.gst_enabled && $('#ni-gst') && $('#ni-gst').checked;
@@ -12859,70 +12700,34 @@ function renderNewInvoice(content, partyType, preselectPartyId){
     const total = round2(afterDisc + gstAmt);
     const paid = Number($('#ni-paid').value) || 0;
     const due = round2(Math.max(0, total - paid));
-
     sumEl.innerHTML = `
-      <div>Subtotal: <b style="font-variant-numeric:tabular-nums">${rs(sub)}</b></div>
-      ${disc > 0 ? `<div>Discount: <b style="color:var(--red);font-variant-numeric:tabular-nums">− ${rs(disc)}</b></div>` : ''}
-      ${gstOn ? `<div>GST @ ${gstRate}%: <b style="font-variant-numeric:tabular-nums">${rs(gstAmt)}</b></div>` : ''}
-      <div>Total: <b style="color:var(--primary-hover);font-size:var(--fs-md);font-variant-numeric:tabular-nums">${rs(total)}</b></div>
-      <div>Paid: <b style="color:var(--green);font-variant-numeric:tabular-nums">${rs(paid)}</b></div>
-      <div>Due: <b style="color:${due > 0 ? 'var(--red)' : 'var(--green)'};font-variant-numeric:tabular-nums">${rs(due)}</b></div>
+      <div>Subtotal: <b>${rs(sub)}</b></div>
+      ${disc > 0 ? `<div>Discount: <b style="color:var(--red)">− ${rs(disc)}</b></div>` : ''}
+      ${gstOn ? `<div>GST @ ${gstRate}%: <b>${rs(gstAmt)}</b></div>` : ''}
+      <div>Total: <b style="color:var(--primary-hover);font-size:var(--fs-md)">${rs(total)}</b></div>
+      <div>Paid: <b style="color:var(--green)">${rs(paid)}</b></div>
+      <div>Due: <b style="color:${due > 0 ? 'var(--red)' : 'var(--green)'}">${rs(due)}</b></div>
     `;
   }
 
-  /* Wire summary inputs */
   $('#ni-disc').oninput = updateSummary;
   $('#ni-paid').oninput = updateSummary;
   const gstToggle = $('#ni-gst');
   if(gstToggle) gstToggle.onchange = updateSummary;
-
-  /* Initial render */
   renderLines();
 
-  /* ══════════════════════════════════════════════════════
-     SAVE
-     ══════════════════════════════════════════════════════ */
-
   async function saveInvoice(){
-    /* Validations */
-    if(!lines.length){
-      toast('Add at least one item', 'error');
-      return null;
-    }
-
+    if(!lines.length){ toast('Add at least one item', 'error'); return null; }
     for(const l of lines){
-      if(!(Number(l.qty) > 0)){
-        toast('Qty must be greater than 0 for ' + l.product_name, 'error');
-        return null;
-      }
-      if(!(Number(l.price) >= 0)){
-        toast('Price cannot be negative for ' + l.product_name, 'error');
-        return null;
-      }
+      if(!(Number(l.qty) > 0)){ toast('Qty must be > 0 for ' + l.product_name, 'error'); return null; }
+      if(!(Number(l.price) >= 0)){ toast('Price cannot be negative for ' + l.product_name, 'error'); return null; }
     }
-
     const partyId = partySS.getValue();
-    if(!partyId){
-      toast('Please select a ' + partyLabel.toLowerCase(), 'error');
-      return null;
-    }
-
+    if(!partyId){ toast('Please select a ' + partyLabel.toLowerCase(), 'error'); return null; }
     const dt = readDateTime(content);
     if(!dt) return null;
-
-    /* Stock check */
     const sc = checkStock(lines);
-    if(!sc.ok){
-      toast(
-        'Not enough stock: ' + sc.productName +
-        ' — need ' + fmtNum(sc.need) + ' ' + sc.unit +
-        ', have ' + fmtNum(sc.available),
-        'error'
-      );
-      return null;
-    }
-
-    /* Totals */
+    if(!sc.ok){ toast('Not enough stock: ' + sc.productName + ' — need ' + fmtNum(sc.need) + ' ' + sc.unit + ', have ' + fmtNum(sc.available), 'error'); return null; }
     const sub = lines.reduce((s, l) => s + Number(l.total || 0), 0);
     const disc = Number($('#ni-disc').value) || 0;
     const paid = Number($('#ni-paid').value) || 0;
@@ -12933,115 +12738,36 @@ function renderNewInvoice(content, partyType, preselectPartyId){
     const gstAmt = gstOn ? round2(afterDisc * gstRate / 100) : 0;
     const total = round2(afterDisc + gstAmt);
     const due = round2(Math.max(0, total - paid));
-
-    /* Insert invoice */
     const invData = {
-      invoice_no:   nextInvoiceNo(partyType),
-      party_id:     partyId,
-      party_type:   partyType,
-      subtotal:     round2(sub),
-      discount:     round2(disc),
-      total,
-      paid:         round2(paid),
-      due,
-      notes,
-      invoice_date: dt.date,
-      tx_time:      dt.time,
-      gst_enabled:  gstOn,
-      gst_rate:     gstRate,
-      gst_amount:   gstAmt
+      invoice_no: nextInvoiceNo(partyType), party_id: partyId, party_type: partyType,
+      subtotal: round2(sub), discount: round2(disc), total, paid: round2(paid), due,
+      notes, invoice_date: dt.date, tx_time: dt.time, gst_enabled: gstOn, gst_rate: gstRate, gst_amount: gstAmt
     };
-
-    const { data: inv, error: invErr } = await sb
-      .from('invoices')
-      .insert(invData)
-      .select()
-      .single();
-
-    if(invErr){
-      toast('Invoice save failed: ' + invErr.message, 'error');
-      return null;
-    }
-
-    /* Insert line items */
+    const { data: inv, error: invErr } = await sb.from('invoices').insert(invData).select().single();
+    if(invErr){ toast('Invoice save failed: ' + invErr.message, 'error'); return null; }
     const itemRows = lines.map(l => ({
-      invoice_id:   inv.id,
-      product_id:   l.product_id,
-      product_name: l.product_name,
-      dual:         !!l.dual,
-      base_unit:    l.base_unit || null,
-      pack_unit:    l.pack_unit || null,
-      pack_size:    l.pack_size || null,
-      unit:         l.unit || null,
-      qty:          Number(l.qty),
-      price:        Number(l.price),
-      total:        Number(l.total)
+      invoice_id: inv.id, product_id: l.product_id, product_name: l.product_name,
+      dual: !!l.dual, base_unit: l.base_unit || null, pack_unit: l.pack_unit || null,
+      pack_size: l.pack_size || null, unit: l.unit || null,
+      qty: Number(l.qty), price: Number(l.price), total: Number(l.total)
     }));
-
     const { error: itErr } = await sb.from('invoice_items').insert(itemRows);
-    if(itErr){
-      toast('Line items save failed: ' + itErr.message, 'error');
-      /* Roll back the invoice to avoid orphan */
-      await sb.from('invoices').delete().eq('id', inv.id);
-      return null;
-    }
-
-    /* Deduct stock in base units */
-    for(const l of lines){
-      const ded = lineDeductBaseQty(l);
-      const ok = await adjustStock(l.product_id, -ded);
-      if(!ok) console.warn('[stock deduct] failed for', l.product_name);
-    }
-
-    /* Full sync so charts, lists, KPIs are consistent */
-    await syncDB();
-    return inv;
+    if(itErr){ toast('Line items save failed: ' + itErr.message, 'error'); await sb.from('invoices').delete().eq('id', inv.id); return null; }
+    for(const l of lines){ await adjustStock(l.product_id, -lineDeductBaseQty(l)); }
+    await syncDB(); return inv;
   }
 
-  /* ══════════════════════════════════════════════════════
-     BUTTONS
-     ══════════════════════════════════════════════════════ */
-
-  const saveBtn   = $('#ni-save');
-  const savePrint = $('#ni-save-print');
-
-  saveBtn.onclick = async () => {
-    saveBtn.disabled = true;
-    const original = saveBtn.textContent;
-    saveBtn.textContent = 'Saving…';
-
-    const inv = await saveInvoice();
-
-    saveBtn.disabled = false;
-    saveBtn.textContent = original;
-
-    if(inv){
-      toast('Invoice saved · ' + inv.invoice_no, 'success');
-      location.hash = '#/invoice/' + inv.id;
-    }
+  $('#ni-save').onclick = async () => {
+    const btn = $('#ni-save'); btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Saving…';
+    const inv = await saveInvoice(); btn.disabled = false; btn.textContent = orig;
+    if(inv){ toast('Invoice saved · ' + inv.invoice_no, 'success'); location.hash = '#/invoice/' + inv.id; }
   };
-
-  savePrint.onclick = async () => {
-    savePrint.disabled = true;
-    const original = savePrint.textContent;
-    savePrint.textContent = 'Saving…';
-
-    const inv = await saveInvoice();
-
-    savePrint.disabled = false;
-    savePrint.textContent = original;
-
-    if(!inv) return;
-
-    toast('Invoice saved · ' + inv.invoice_no, 'success');
-
-    /* Route to the invoice view — user can print from there via
-       the PDF / Bluetooth / USB buttons. This keeps a single
-       canonical print flow. */
-    location.hash = '#/invoice/' + inv.id;
+  $('#ni-save-print').onclick = async () => {
+    const btn = $('#ni-save-print'); btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Saving…';
+    const inv = await saveInvoice(); btn.disabled = false; btn.textContent = orig;
+    if(!inv) return; toast('Invoice saved · ' + inv.invoice_no, 'success'); location.hash = '#/invoice/' + inv.id;
   };
 }
-
 /* ══════════════════════════════════════════════════════════════
    END BLOCK 30
    ══════════════════════════════════════════════════════════════ */
@@ -14139,49 +13865,36 @@ function renderPurchases(content){
 }
 
 /* ══════════════════════════════════════════════════════════════
-   32b — PURCHASE BILL FORM (create + edit)
-   `supplier` may be null (user picks from a dropdown inside).
-   `existing` is the bill row being edited (null for new).
-   On save → adds/updates stock in base units.
+   32b — PURCHASE BILL FORM (Fixed Dual-Unit Cost & Delete Bug)
    ══════════════════════════════════════════════════════════════ */
-
 function openPurchaseBillForm(supplier, existing){
-  /* ─── Local line state (scoped inside this invocation) ── */
   let billLines = existing
     ? (DB.supplier_invoice_items || [])
         .filter(x => x.supplier_invoice_id === existing.id)
-        .map(x => ({
-          product_id:   x.product_id,
-          product_name: x.product_name,
-          dual:         !!(DB.products || []).find(p => p.id === x.product_id)?.dual,
-          base_unit:    (DB.products || []).find(p => p.id === x.product_id)?.base_unit || null,
-          pack_unit:    (DB.products || []).find(p => p.id === x.product_id)?.pack_unit || null,
-          pack_size:    Number((DB.products || []).find(p => p.id === x.product_id)?.pack_size) || 1,
-          unit:         x.unit,
-          qty:          Number(x.qty) || 0,
-          cost:         Number(x.cost) || 0,
-          total:        Number(x.total) || 0
-        }))
+        .map(x => {
+          const p = (DB.products || []).find(p => p.id === x.product_id);
+          return {
+            product_id:   x.product_id,
+            product_name: x.product_name,
+            dual:         !!p?.dual,
+            base_unit:    p?.base_unit || null,
+            pack_unit:    p?.pack_unit || null,
+            pack_size:    Number(p?.pack_size) || 1,
+            unit:         x.unit,
+            qty:          Number(x.qty) || 0,
+            cost:         Number(x.cost) || 0,
+            total:        Number(x.total) || 0
+          };
+        })
     : [];
 
-  /* Whether the supplier dropdown should be shown */
   const showSupplierPicker = !supplier;
-
-  const b = existing || {
-    bill_no:   '',
-    bill_date: todayStr(),
-    tx_time:   '',
-    discount:  0,
-    paid:      0,
-    notes:     ''
-  };
+  const b = existing || { bill_no: '', bill_date: todayStr(), tx_time: '', discount: 0, paid: 0, notes: '' };
 
   openModal(`
     <h2>${existing ? 'Edit Purchase Bill' : 'New Purchase Bill'}</h2>
     <p class="modal-sub">
-      ${supplier
-        ? 'From: <b>' + esc(supplier.name) + '</b>'
-        : 'Record what you bought — stock gets added automatically.'}
+      ${supplier ? 'From: <b>' + esc(supplier.name) + '</b>' : 'Record what you bought — stock gets added automatically.'}
     </p>
 
     <form id="pbill-form" class="modal-body" novalidate>
@@ -14189,21 +13902,17 @@ function openPurchaseBillForm(supplier, existing){
         <div class="field">
           <label class="label">Purchased from <span class="req">*</span></label>
           <div id="pb-supplier-mount"></div>
-          <div class="field-hint">Add a company or vendor from the dropdown if it's not listed.</div>
         </div>
       ` : ''}
 
       <div class="form-row-2">
         <div class="field">
           <label class="label">Bill number</label>
-          <input class="input" type="text" name="bill_no" maxlength="60"
-            value="${esc(b.bill_no || '')}"
-            placeholder="Company's bill no." autofocus>
+          <input class="input" type="text" name="bill_no" maxlength="60" value="${esc(b.bill_no || '')}" placeholder="Company's bill no." autofocus>
         </div>
         <div class="field">
           <label class="label">Discount (₹)</label>
-          <input class="input" type="number" step="any" min="0" id="pb-disc" name="discount"
-            value="${b.discount || 0}">
+          <input class="input" type="number" step="any" min="0" id="pb-disc" name="discount" value="${b.discount || 0}">
         </div>
       </div>
 
@@ -14212,9 +13921,6 @@ function openPurchaseBillForm(supplier, existing){
       <div class="field">
         <label class="label">Add items</label>
         <div id="pb-prod-mount"></div>
-        <div class="field-hint">
-          Add each product bought. Stock gets added when you save.
-        </div>
       </div>
 
       <div id="pb-lines"></div>
@@ -14222,13 +13928,11 @@ function openPurchaseBillForm(supplier, existing){
       <div class="form-row-2">
         <div class="field">
           <label class="label">Paid now (₹)</label>
-          <input class="input" type="number" step="any" min="0" name="paid"
-            value="${b.paid || 0}">
+          <input class="input" type="number" step="any" min="0" name="paid" value="${b.paid || 0}">
         </div>
         <div class="field">
           <label class="label">Notes</label>
-          <input class="input" type="text" name="notes" maxlength="200"
-            value="${esc(b.notes || '')}" placeholder="Optional">
+          <input class="input" type="text" name="notes" maxlength="200" value="${esc(b.notes || '')}" placeholder="Optional">
         </div>
       </div>
 
@@ -14236,62 +13940,35 @@ function openPurchaseBillForm(supplier, existing){
 
       <div class="form-actions">
         <button type="button" class="btn btn-ghost" id="pbill-cancel">Cancel</button>
-        <button type="submit" class="btn btn-primary" id="pbill-save">
-          ${existing ? 'Update' : 'Save'} Bill
-        </button>
+        <button type="submit" class="btn btn-primary" id="pbill-save">${existing ? 'Update' : 'Save'} Bill</button>
       </div>
     </form>
   `, (root) => {
-    const form    = root.querySelector('#pbill-form');
+    const form = root.querySelector('#pbill-form');
     const saveBtn = root.querySelector('#pbill-save');
-
-    /* ══════════════════════════════════════════════════════
-       SUPPLIER PICKER (when no supplier was pre-selected)
-       ══════════════════════════════════════════════════════ */
-
     let selectedSupplier = supplier || null;
 
     if(showSupplierPicker){
       const supMount = root.querySelector('#pb-supplier-mount');
       supMount.innerHTML = searchSelectHTML('pb-sup-ss', 'Search company or vendor…');
-
       const supSS = mountSearchSelect(root.querySelector('#pb-sup-ss'), {
         items: (DB.suppliers || []).map(s => supplierToOption(s)),
         allowAdd: true,
         onAdd: () => {
-          /* Decide which type to create by default — ask user */
-          const wantVendor = confirm(
-            'Add a new supplier.\n\n' +
-            'OK → Vendor (another distributor)\n' +
-            'Cancel → Company (brand / manufacturer)'
-          );
-          const type = wantVendor ? 'vendor' : 'company';
-
-          openSupplierForm(null, type, (newSup) => {
-            /* Refresh the picker items */
+          const wantVendor = confirm('Add a new supplier.\n\nOK → Vendor\nCancel → Company');
+          openSupplierForm(null, wantVendor ? 'vendor' : 'company', (newSup) => {
             supSS.setItems((DB.suppliers || []).map(s => supplierToOption(s)));
-            /* Auto-select the newly created one */
-            setTimeout(() => {
-              supSS.setValue(newSup.id);
-              selectedSupplier = newSup;
-              updateSummary();
-            }, 80);
+            setTimeout(() => { supSS.setValue(newSup.id); selectedSupplier = newSup; updateSummary(); }, 80);
           });
         },
         onSelect: (opt) => {
-          if(!opt){ selectedSupplier = null; return; }
-          selectedSupplier = (DB.suppliers || []).find(x => x.id === opt.id) || null;
+          selectedSupplier = opt ? (DB.suppliers || []).find(x => x.id === opt.id) : null;
         }
       });
     }
 
-    /* ══════════════════════════════════════════════════════
-       PRODUCT PICKER
-       ══════════════════════════════════════════════════════ */
-
     const prodMount = root.querySelector('#pb-prod-mount');
     prodMount.innerHTML = searchSelectHTML('pb-prod-ss', 'Search products to buy…');
-
     const prodSS = mountSearchSelect(root.querySelector('#pb-prod-ss'), {
       items: (DB.products || []).map(p => productToOption(p)),
       allowAdd: true,
@@ -14311,106 +13988,65 @@ function openPurchaseBillForm(supplier, existing){
       }
     });
 
-    /* ══════════════════════════════════════════════════════
-       LINE MANAGEMENT
-       ══════════════════════════════════════════════════════ */
+    // ✅ FIX: Helper to calculate cost based on unit
+    function costForUnit(p, unit) {
+      const baseCost = Number(p.cost) || 0;
+      if (p.dual && p.pack_unit && unit === p.pack_unit) {
+        return round2(baseCost * (Number(p.pack_size) || 1));
+      }
+      return baseCost;
+    }
 
     function addLine(p){
-      /* Default unit */
-      let defaultUnit;
-      if(p.dual){
-        defaultUnit = p.base_unit || 'piece';
-      } else {
-        defaultUnit = p.unit || 'piece';
-      }
-
+      let defaultUnit = p.dual ? (p.base_unit || 'piece') : (p.unit || 'piece');
+      const cost = costForUnit(p, defaultUnit);
+      
       billLines.push({
-        product_id:   p.id,
-        product_name: p.name,
-        dual:         !!p.dual,
-        base_unit:    p.base_unit || null,
-        pack_unit:    p.pack_unit || null,
-        pack_size:    Number(p.pack_size) || 1,
-        unit:         defaultUnit,
-        qty:          1,
-        cost:         Number(p.cost) || 0,
-        total:        Number(p.cost) || 0
+        product_id: p.id, product_name: p.name, dual: !!p.dual,
+        base_unit: p.base_unit || null, pack_unit: p.pack_unit || null,
+        pack_size: Number(p.pack_size) || 1, unit: defaultUnit,
+        qty: 1, cost: cost, total: cost
       });
-
       renderLines();
     }
 
     function renderLines(){
       const box = root.querySelector('#pb-lines');
       if(!billLines.length){
-        box.innerHTML = `
-          <div style="padding:20px 16px;text-align:center;color:var(--ink-3);font-size:var(--fs-sm);background:var(--card-alt);border-radius:var(--r-md);border:1px dashed var(--border-strong)">
-            No items yet. Search products above to add them.
-          </div>
-        `;
-        updateSummary();
-        return;
+        box.innerHTML = '<div style="padding:20px;text-align:center;color:var(--ink-3);background:var(--card-alt);border-radius:var(--r-md);border:1px dashed var(--border-strong)">No items yet. Search products above to add them.</div>';
+        updateSummary(); return;
       }
 
       box.innerHTML = `
-        <div class="tbl-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th style="width:36%">Item</th>
-                <th style="width:90px;text-align:right">Qty</th>
-                <th style="width:140px">Unit</th>
-                <th style="width:110px;text-align:right">Cost ₹</th>
-                <th style="text-align:right">Total</th>
-                <th style="width:40px"></th>
-              </tr>
-            </thead>
-            <tbody>
-              ${billLines.map((l, i) => {
-                const unitCell = l.dual
-                  ? `<select class="input-inline unit" data-i="${i}" data-f="unit">
-                       <option value="${esc(l.base_unit)}" ${l.unit === l.base_unit ? 'selected' : ''}>
-                         ${esc(l.base_unit)}
-                       </option>
-                       <option value="${esc(l.pack_unit)}" ${l.unit === l.pack_unit ? 'selected' : ''}>
-                         ${esc(l.pack_unit)} (${fmtNum(l.pack_size)} ${esc(l.base_unit)})
-                       </option>
-                     </select>`
-                  : `<span style="font-size:var(--fs-sm);color:var(--ink-3)">${esc(l.unit || '—')}</span>`;
-
-                return `
-                  <tr>
-                    <td>
-                      <strong style="display:block;color:var(--ink)">${esc(l.product_name)}</strong>
-                      ${l.dual ? `<span style="font-size:var(--fs-xs);color:var(--ink-3)">${fmtNum(l.pack_size)} ${esc(l.base_unit)} / ${esc(l.pack_unit)}</span>` : ''}
-                    </td>
-                    <td>
-                      <input class="input-inline qty" type="number" step="any" min="0.01"
-                        data-i="${i}" data-f="qty" value="${l.qty}">
-                    </td>
-                    <td>${unitCell}</td>
-                    <td>
-                      <input class="input-inline price" type="number" step="any" min="0"
-                        data-i="${i}" data-f="cost" value="${l.cost}" placeholder="0.00">
-                    </td>
-                    <td style="text-align:right;font-weight:600;font-variant-numeric:tabular-nums">${rs(l.total)}</td>
-                    <td>
-                      <button class="btn btn-ghost btn-sm" type="button" data-del="${i}" style="color:var(--red)">✕</button>
-                    </td>
-                  </tr>
-                `;
-              }).join('')}
-            </tbody>
-          </table>
-        </div>
+        <div class="tbl-wrap"><table>
+          <thead><tr>
+            <th style="width:36%">Item</th><th style="width:90px;text-align:right">Qty</th><th style="width:140px">Unit</th><th style="width:110px;text-align:right">Cost ₹</th><th style="text-align:right">Total</th><th style="width:40px"></th>
+          </tr></thead>
+          <tbody>
+            ${billLines.map((l, i) => {
+              const unitCell = l.dual
+                ? `<select class="input-inline unit" data-i="${i}" data-f="unit">
+                     <option value="${esc(l.base_unit)}" ${l.unit === l.base_unit ? 'selected' : ''}>${esc(l.base_unit)}</option>
+                     <option value="${esc(l.pack_unit)}" ${l.unit === l.pack_unit ? 'selected' : ''}>${esc(l.pack_unit)} (${fmtNum(l.pack_size)} ${esc(l.base_unit)})</option>
+                   </select>`
+                : `<span style="font-size:var(--fs-sm);color:var(--ink-3)">${esc(l.unit || '—')}</span>`;
+              return `
+                <tr>
+                  <td><strong>${esc(l.product_name)}</strong>${l.dual ? `<div style="font-size:var(--fs-xs);color:var(--ink-3)">${fmtNum(l.pack_size)} ${esc(l.base_unit)} / ${esc(l.pack_unit)}</div>` : ''}</td>
+                  <td><input class="input-inline qty" type="number" step="any" min="0.01" data-i="${i}" data-f="qty" value="${l.qty}"></td>
+                  <td>${unitCell}</td>
+                  <td><input class="input-inline price" type="number" step="any" min="0" data-i="${i}" data-f="cost" value="${l.cost}" placeholder="0.00"></td>
+                  <td style="text-align:right;font-weight:600;">${rs(l.total)}</td>
+                  <td><button class="btn btn-ghost btn-sm" type="button" data-del="${i}" style="color:var(--red)">✕</button></td>
+                </tr>`;
+            }).join('')}
+          </tbody>
+        </table></div>
       `;
 
-      /* Wire qty / cost inputs */
       box.querySelectorAll('input[data-i]').forEach(inp => {
         inp.addEventListener('input', (e) => {
-          const i = +e.target.dataset.i;
-          const f = e.target.dataset.f;
-          const v = Number(e.target.value) || 0;
+          const i = +e.target.dataset.i; const f = e.target.dataset.f; const v = Number(e.target.value) || 0;
           billLines[i][f] = v;
           billLines[i].total = round2(Number(billLines[i].qty || 0) * Number(billLines[i].cost || 0));
           const totalCell = e.target.closest('tr').querySelector('td:nth-last-child(2)');
@@ -14420,200 +14056,96 @@ function openPurchaseBillForm(supplier, existing){
         inp.addEventListener('blur', () => renderLines());
       });
 
-           /* Wire unit selector */
       box.querySelectorAll('select[data-i]').forEach(sel => {
         sel.onchange = (e) => {
           const i = +e.target.dataset.i;
           billLines[i].unit = e.target.value;
-          /* Cost stays per base unit — only qty display changes. */
+          // ✅ FIX: Recalculate cost when unit changes
+          const p = DB.products.find(x => x.id === billLines[i].product_id);
+          if (p) {
+            billLines[i].cost = costForUnit(p, billLines[i].unit);
+            billLines[i].total = round2(Number(billLines[i].qty || 0) * Number(billLines[i].cost || 0));
+          }
           renderLines();
         };
       });
 
+      // ✅ FIX: Use onmousedown instead of onclick to fire before blur
+      box.querySelectorAll('[data-del]').forEach(b => {
+        b.onmousedown = (e) => {
+          e.preventDefault(); // Prevent focus loss
+          billLines.splice(+b.dataset.del, 1);
+          renderLines();
+        };
+      });
       updateSummary();
     }
-
-    /* ══════════════════════════════════════════════════════
-       SUMMARY
-       ══════════════════════════════════════════════════════ */
 
     function updateSummary(){
       const sumEl = root.querySelector('#pb-summary');
       if(!sumEl) return;
-
       const sub  = billLines.reduce((s, l) => s + Number(l.total || 0), 0);
       const disc = Number(root.querySelector('#pb-disc').value) || 0;
       const total = round2(Math.max(0, sub - disc));
-
       sumEl.innerHTML = `
-        <div style="display:flex;justify-content:space-between">
-          <span style="color:var(--ink-3)">Subtotal</span>
-          <b style="font-variant-numeric:tabular-nums">${rs(sub)}</b>
-        </div>
-        <div style="display:flex;justify-content:space-between">
-          <span style="color:var(--ink-3)">Discount</span>
-          <b style="color:var(--red);font-variant-numeric:tabular-nums">− ${rs(disc)}</b>
-        </div>
-        <div style="display:flex;justify-content:space-between;padding-top:6px;border-top:1px solid var(--border)">
-          <b>Total</b>
-          <b style="color:var(--primary-hover);font-size:var(--fs-md);font-variant-numeric:tabular-nums">${rs(total)}</b>
-        </div>
+        <div style="display:flex;justify-content:space-between"><span style="color:var(--ink-3)">Subtotal</span><b>${rs(sub)}</b></div>
+        <div style="display:flex;justify-content:space-between"><span style="color:var(--ink-3)">Discount</span><b style="color:var(--red)">− ${rs(disc)}</b></div>
+        <div style="display:flex;justify-content:space-between;padding-top:6px;border-top:1px solid var(--border)"><b>Total</b><b style="color:var(--primary-hover);font-size:var(--fs-md)">${rs(total)}</b></div>
       `;
     }
 
     root.querySelector('#pb-disc').oninput = updateSummary;
-
-    /* ══════════════════════════════════════════════════════
-       INITIAL RENDER
-       ══════════════════════════════════════════════════════ */
-
     renderLines();
-
-    /* ══════════════════════════════════════════════════════
-       CANCEL
-       ══════════════════════════════════════════════════════ */
-
     root.querySelector('#pbill-cancel').onclick = () => closeModal(root);
-
-    /* ══════════════════════════════════════════════════════
-       SAVE
-       ══════════════════════════════════════════════════════ */
 
     form.onsubmit = async (e) => {
       e.preventDefault();
-
-      /* Validate supplier */
-      if(!selectedSupplier){
-        toast('Please select a company or vendor', 'error');
-        return;
-      }
-
-      /* Validate lines */
-      if(!billLines.length){
-        toast('Add at least one item', 'error');
-        return;
-      }
-
+      if(!selectedSupplier){ toast('Please select a company or vendor', 'error'); return; }
+      if(!billLines.length){ toast('Add at least one item', 'error'); return; }
       for(const l of billLines){
-        if(!(Number(l.qty) > 0)){
-          toast('Qty must be greater than 0 for ' + l.product_name, 'error');
-          return;
-        }
-        if(Number(l.cost) < 0){
-          toast('Cost cannot be negative for ' + l.product_name, 'error');
-          return;
-        }
+        if(!(Number(l.qty) > 0)){ toast('Qty must be > 0 for ' + l.product_name, 'error'); return; }
+        if(Number(l.cost) < 0){ toast('Cost cannot be negative for ' + l.product_name, 'error'); return; }
       }
-
       const dt = readDateTime(form);
       if(!dt) return;
-
       const fd = new FormData(form);
       const sub  = billLines.reduce((s, l) => s + Number(l.total || 0), 0);
       const disc = Number(fd.get('discount')) || 0;
       const total = round2(Math.max(0, sub - disc));
       const paid  = Number(fd.get('paid')) || 0;
-
       const header = {
-        supplier_id: selectedSupplier.id,
-        bill_no:     (fd.get('bill_no') || '').trim(),
-        bill_date:   dt.date,
-        tx_time:     dt.time,
-        subtotal:    round2(sub),
-        discount:    round2(disc),
-        total,
-        paid:        round2(paid),
-        notes:       (fd.get('notes') || '').trim()
+        supplier_id: selectedSupplier.id, bill_no: (fd.get('bill_no') || '').trim(),
+        bill_date: dt.date, tx_time: dt.time, subtotal: round2(sub),
+        discount: round2(disc), total, paid: round2(paid), notes: (fd.get('notes') || '').trim()
       };
-
       const itemRowsBase = billLines.map(l => ({
-        product_id:   l.product_id,
-        product_name: l.product_name,
-        unit:         l.unit,
-        qty:          Number(l.qty),
-        cost:         Number(l.cost),
-        total:        Number(l.total)
+        product_id: l.product_id, product_name: l.product_name,
+        unit: l.unit, qty: Number(l.qty), cost: Number(l.cost), total: Number(l.total)
       }));
 
-      saveBtn.disabled = true;
-      saveBtn.textContent = 'Saving…';
+      saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
 
-      /* ══════════════════════════════════════════════════
-         EDIT PATH
-         ══════════════════════════════════════════════════ */
       if(existing){
-        /* 1. Update header */
         const upd = await sb.from('supplier_invoices').update(header).eq('id', existing.id).select().single();
-        if(upd.error){
-          toast(upd.error.message, 'error');
-          saveBtn.disabled = false;
-          saveBtn.textContent = 'Update Bill';
-          return;
-        }
-
-        /* 2. Reverse old stock */
+        if(upd.error){ toast(upd.error.message, 'error'); saveBtn.disabled = false; saveBtn.textContent = 'Update Bill'; return; }
         const oldItems = (DB.supplier_invoice_items || []).filter(x => x.supplier_invoice_id === existing.id);
-        for(const oi of oldItems){
-          await adjustStock(oi.product_id, -Number(oi.qty));
-        }
-
-        /* 3. Delete old items */
+        for(const oi of oldItems){ await adjustStock(oi.product_id, -Number(oi.qty)); }
         await sb.from('supplier_invoice_items').delete().eq('supplier_invoice_id', existing.id);
-
-        /* 4. Insert new items */
         const newRows = itemRowsBase.map(r => ({ ...r, supplier_invoice_id: existing.id }));
         const itIns = await sb.from('supplier_invoice_items').insert(newRows);
-        if(itIns.error){
-          toast('Items save failed: ' + itIns.error.message, 'error');
-          saveBtn.disabled = false;
-          saveBtn.textContent = 'Update Bill';
-          return;
-        }
-
-              /* Apply stock — convert to base units when the unit is the pack */
-      for(const l of billLines){
-        await adjustStock(l.product_id, lineDeductBaseQty(l));
+        if(itIns.error){ toast('Items save failed: ' + itIns.error.message, 'error'); saveBtn.disabled = false; saveBtn.textContent = 'Update Bill'; return; }
+        for(const l of billLines){ await adjustStock(l.product_id, lineDeductBaseQty(l)); }
+        await syncDB(); toast('Bill updated — stock adjusted', 'success'); closeModal(root); route(); return;
       }
 
-        await syncDB();
-        toast('Bill updated — stock adjusted', 'success');
-        closeModal(root);
-        route();
-        return;
-      }
-
-      /* ══════════════════════════════════════════════════
-         NEW BILL PATH
-         ══════════════════════════════════════════════════ */
       const ins = await sb.from('supplier_invoices').insert(header).select().single();
-      if(ins.error){
-        toast(ins.error.message, 'error');
-        saveBtn.disabled = false;
-        saveBtn.textContent = 'Save Bill';
-        return;
-      }
+      if(ins.error){ toast(ins.error.message, 'error'); saveBtn.disabled = false; saveBtn.textContent = 'Save Bill'; return; }
       const bill = ins.data;
-
       const newRows = itemRowsBase.map(r => ({ ...r, supplier_invoice_id: bill.id }));
       const itIns = await sb.from('supplier_invoice_items').insert(newRows);
-      if(itIns.error){
-        /* Roll back the header to avoid orphan */
-        await sb.from('supplier_invoices').delete().eq('id', bill.id);
-        toast('Items save failed: ' + itIns.error.message, 'error');
-        saveBtn.disabled = false;
-        saveBtn.textContent = 'Save Bill';
-        return;
-      }
-
-            /* Apply stock — convert to base units when the unit is the pack */
-      for(const l of billLines){
-        await adjustStock(l.product_id, lineDeductBaseQty(l));
-      }
-
-      await syncDB();
-      toast('Bill saved — stock added', 'success');
-      closeModal(root);
-      route();
+      if(itIns.error){ await sb.from('supplier_invoices').delete().eq('id', bill.id); toast('Items save failed: ' + itIns.error.message, 'error'); saveBtn.disabled = false; saveBtn.textContent = 'Save Bill'; return; }
+      for(const l of billLines){ await adjustStock(l.product_id, lineDeductBaseQty(l)); }
+      await syncDB(); toast('Bill saved — stock added', 'success'); closeModal(root); route();
     };
   });
 }
