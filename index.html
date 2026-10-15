@@ -12261,16 +12261,21 @@ async function renderPartyProfile(content, id, type){
           ? '<p style="color:var(--ink-3);font-size:var(--fs-sm);text-align:center;padding:20px 0">No payments yet</p>'
           : `
             <div style="display:flex;flex-direction:column;gap:8px">
-              ${payments.slice(0, 12).map(p => `
-                <div style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);font-size:var(--fs-sm)">
-                  <div style="flex:1;min-width:0">
-                    <div style="color:var(--green);font-weight:600;font-variant-numeric:tabular-nums">${rs(p.amount)}</div>
-                    <div style="color:var(--ink-3);font-size:var(--fs-xs)">${txDT(p, 'payment_date')} · ${esc(p.mode || '')}</div>
+                           ${payments.slice(0, 12).map(p => {
+                const isRefund = Number(p.amount) < 0;
+                const amtColor = isRefund ? 'var(--red)' : 'var(--green)';
+                const label    = isRefund ? 'REFUND' : (p.mode || 'payment').toUpperCase();
+                return `
+                  <div style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);font-size:var(--fs-sm)">
+                    <div style="flex:1;min-width:0">
+                      <div style="color:${amtColor};font-weight:600;font-variant-numeric:tabular-nums">${rs(p.amount)}</div>
+                      <div style="color:var(--ink-3);font-size:var(--fs-xs)">${txDT(p, 'payment_date')} · ${esc(label)}</div>
+                    </div>
+                    <button class="btn btn-ghost btn-sm" type="button"
+                      data-pay-del="${p.id}" style="color:var(--red);align-self:center">Del</button>
                   </div>
-                  <button class="btn btn-ghost btn-sm" type="button"
-                    data-pay-del="${p.id}" style="color:var(--red);align-self:center">Del</button>
-                </div>
-              `).join('')}
+                `;
+              }).join('')}
             </div>
             ${payments.length > 12
               ? `<div style="text-align:center;padding-top:10px;font-size:var(--fs-xs);color:var(--ink-3)">+ ${payments.length - 12} more…</div>`
@@ -12473,13 +12478,27 @@ function openPartyPaymentForm(partyId, partyType){
         ${st.due > 0 ? '<div class="field-hint">Suggested: full outstanding balance</div>' : ''}
       </div>
 
-      <div class="field">
+           <div class="field">
         <label class="label">Payment mode</label>
         <select class="input" name="mode">
           ${PAYMENT_MODES.map(m => `
             <option value="${m}">${m.charAt(0).toUpperCase() + m.slice(1)}</option>
           `).join('')}
         </select>
+      </div>
+
+      <div class="field">
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;
+                      padding:10px 12px;background:var(--red-bg);border:1px solid var(--red-border);
+                      border-radius:var(--r-sm)">
+          <input type="checkbox" name="is_refund">
+          <span>
+            <b style="color:var(--red);display:block">This is a refund paid to the party</b>
+            <span style="font-size:var(--fs-xs);color:var(--ink-3)">
+              Money going out — reduces a credit balance.
+            </span>
+          </span>
+        </label>
       </div>
 
       <div class="field">
@@ -12504,10 +12523,15 @@ function openPartyPaymentForm(partyId, partyType){
       const dt = readDateTime(form);
       if(!dt) return;
 
-      const fd = new FormData(form);
-      const amt = Number(fd.get('amount')) || 0;
-      if(amt <= 0){
-        toast('Amount must be greater than 0', 'error');
+            const fd = new FormData(form);
+      const raw = Number(fd.get('amount')) || 0;
+      const isRefund = form.querySelector('input[name="is_refund"]')?.checked;
+
+      /* ✅ Refunds become negative payments; receipts stay positive */
+      const amt = isRefund ? -Math.abs(raw) : Math.abs(raw);
+
+      if(amt === 0){
+        toast('Amount must not be zero', 'error');
         return;
       }
 
