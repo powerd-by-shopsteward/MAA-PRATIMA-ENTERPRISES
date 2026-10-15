@@ -5449,26 +5449,37 @@ function lineDeductBaseQty(line){
 }
 
 /* ══════════════════════════════════════════════════════════════
-   14k — PARTY STATS (Fixed for Credit Notes)
+   14k — PARTY STATS (Fixed for Returns)
    ══════════════════════════════════════════════════════════════ */
 function partyStats(partyId, partyType){
   const invs = DB.invoices.filter(i => i.party_id === partyId && i.party_type === partyType);
   const pays = DB.payments.filter(p => p.party_id === partyId && p.party_type === partyType);
 
-  const total_billed = invs.reduce((s, i) => {
+  let total_invoiced = 0;
+  let total_returned = 0;
+
+  invs.forEach(i => {
     const isCredit = String(i.invoice_no || '').startsWith('RET-') || Number(i.total) < 0;
-    return s + (isCredit ? -Math.abs(Number(i.total || 0)) : Number(i.total || 0));
-  }, 0);
+    if (isCredit) {
+      total_returned += Math.abs(Number(i.total || 0));
+    } else {
+      total_invoiced += Number(i.total || 0);
+    }
+  });
 
   const invoice_paid = invs.reduce((s, i) => s + Number(i.paid || 0), 0);
   const extra_paid   = pays.reduce((s, p) => s + Number(p.amount || 0), 0);
   const total_paid   = invoice_paid + extra_paid;
 
+  // Due = Total Invoiced - Total Returned - Total Paid
+  const due = Math.max(0, total_invoiced - total_returned - total_paid);
+
   return {
-    total_billed,
+    total_billed: total_invoiced,   // This is now always positive
+    total_returned: total_returned, // Added this so we can show returns
     total_paid,
-    due: Math.max(0, total_billed - total_paid),
-    invoice_count: invs.length,
+    due,
+    invoice_count: invs.filter(i => !String(i.invoice_no || '').startsWith('RET-')).length,
     payment_count: pays.length
   };
 }
@@ -12166,20 +12177,25 @@ async function renderPartyProfile(content, id, type){
       </div>
     </div>
 
-    <!-- KPI row -->
+       <!-- KPI row -->
     <div class="grid-4" style="margin-bottom:16px">
       <div class="mini-stat">
-        <div class="lbl">Total Billed</div>
+        <div class="lbl">Total Invoiced</div>
         <div class="val">${rs(st.total_billed)}</div>
+      </div>
+      <div class="mini-stat">
+        <div class="lbl">Returns</div>
+        <div class="val" style="color:var(--red)">− ${rs(st.total_returned)}</div>
       </div>
       <div class="mini-stat">
         <div class="lbl">Total Paid</div>
         <div class="val" style="color:var(--green)">${rs(st.total_paid)}</div>
       </div>
       <div class="mini-stat" style="background:${st.due > 0 ? 'var(--red-bg)' : 'var(--green-bg)'};border-color:${st.due > 0 ? 'var(--red-border)' : 'var(--green-border)'}">
-        <div class="lbl">Due</div>
+        <div class="lbl">Net Due</div>
         <div class="val" style="color:${st.due > 0 ? 'var(--red)' : 'var(--green)'}">${rs(st.due)}</div>
       </div>
+    </div>
       <div class="mini-stat">
         <div class="lbl">Activity</div>
         <div class="val">${st.invoice_count} 📄 · ${st.payment_count} 💳</div>
@@ -12197,8 +12213,9 @@ async function renderPartyProfile(content, id, type){
           ? '<p style="color:var(--ink-3);font-size:var(--fs-sm);text-align:center;padding:20px 0">No invoices yet</p>'
           : `
             <div style="display:flex;flex-direction:column;gap:8px">
-              ${invoices.slice(0, 12).map(i => {
-                const isCredit = String(i.invoice_no || '').startsWith('RET-');
+                            ${invoices.slice(0, 12).map(i => {
+                const isCredit = String(i.invoice_no || '').startsWith('RET-') || Number(i.total) < 0;
+                const displayTotal = isCredit ? -Math.abs(Number(i.total || 0)) : Number(i.total || 0);
                 return `
                   <div style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);font-size:var(--fs-sm)">
                     <div style="flex:1;min-width:0">
@@ -12209,12 +12226,12 @@ async function renderPartyProfile(content, id, type){
                       <div style="color:var(--ink-3);font-size:var(--fs-xs)">${txDT(i, 'invoice_date')}</div>
                     </div>
                     <div style="text-align:right;white-space:nowrap">
-                      <div style="font-weight:600;font-variant-numeric:tabular-nums;color:${Number(i.total) < 0 ? 'var(--red)' : 'var(--ink)'}">
-                        ${rs(i.total)}
+                      <div style="font-weight:600;font-variant-numeric:tabular-nums;color:${isCredit ? 'var(--red)' : 'var(--ink)'}">
+                        ${rs(displayTotal)}
                       </div>
-                      ${Number(i.due) > 0
+                      ${!isCredit && Number(i.due) > 0
                         ? `<div style="color:var(--red);font-size:var(--fs-xs)">Due ${rs(i.due)}</div>`
-                        : (Number(i.total) > 0 ? '<div style="color:var(--green);font-size:var(--fs-xs)">Paid</div>' : '')}
+                        : (!isCredit ? '<div style="color:var(--green);font-size:var(--fs-xs)">Paid</div>' : '')}
                     </div>
                   </div>
                 `;
@@ -12301,7 +12318,7 @@ async function renderPartyProfile(content, id, type){
               </td>
               <td style="text-align:right;font-variant-numeric:tabular-nums">${t.debit ? rs(t.debit) : '—'}</td>
               <td style="text-align:right;color:var(--green);font-variant-numeric:tabular-nums">${t.credit ? rs(t.credit) : '—'}</td>
-              <td style="text-align:right;font-weight:700;font-variant-numeric:tabular-nums;color:${balance > 0 ? 'var(--red)' : 'var(--green)'}">
+                           <td style="text-align:right;font-weight:700;font-variant-numeric:tabular-nums;color:${balance > 0 ? 'var(--red)' : (balance < 0 ? 'var(--blue)' : 'var(--green)')}">
                 ${rs(balance)}
               </td>
             </tr>
