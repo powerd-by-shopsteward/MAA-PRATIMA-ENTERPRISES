@@ -1,7 +1,7 @@
 <!-- ══════════════════════════════════════════════════════════════
      BLOCK 1 — HTML HEAD, META, CDN LINKS
      Stationery Distributor Manager
-     Ends by leaving <head> OPEN — CSS blocks continue inside it.
+     Ends by leaving <head> OPEN — CSS blocks continue inside it.then giv
      ══════════════════════════════════════════════════════════════ -->
 <!DOCTYPE html>
 <html lang="en">
@@ -24616,7 +24616,750 @@ window.SUBSCRIPTION_CONFIG = {
 /* ════════════════════════════════════════════════════════════════════
    END BLOCK 52 — SUBSCRIPTION SYSTEM
    ════════════════════════════════════════════════════════════════════ */
+<!-- ══════════════════════════════════════════════════════════════════
+     BLOCK 53 — INVENTORY
+     ──────────────────────────────────────────────────────────────────
+     Value, health, and money locked in stock. Self-contained.
+
+     Adds:
+       • Sidebar link "Inventory"  (Catalogue group, after Products)
+       • Mobile nav entry          (same position)
+       • Route #/inventory
+       • Full page: 8 KPI tiles + category chart + health donut
+                    + supplier breakdown + top-10 list + slow movers
+                    + filterable/sortable full table + CSV/PDF export
+
+     Reads only: DB.products, DB.invoices, DB.invoice_items, DB.suppliers
+     No schema changes. No edits needed to any other block.
+
+     To remove: delete from the START marker above to the END marker
+                at the very bottom.
+     ══════════════════════════════════════════════════════════════════ -->
+
+<script>
+(function () {
+  'use strict';
+
+  /* ══════════════════════════════════════════════════════════════
+     53.1 — REGISTER NAV ENTRIES
+     NAV_LINKS and MOBILE_NAV are const arrays; we mutate them
+     (splice) so every future renderLayout() picks up the link.
+     ══════════════════════════════════════════════════════════════ */
+  try {
+    if (typeof NAV_LINKS !== 'undefined' && Array.isArray(NAV_LINKS)) {
+      var catGroup = NAV_LINKS.find(function (g) { return g.group === 'Catalogue'; });
+      if (catGroup && !catGroup.items.some(function (it) { return it.href === '#/inventory'; })) {
+        var pIdx = catGroup.items.findIndex(function (it) { return it.href === '#/products'; });
+        catGroup.items.splice(pIdx >= 0 ? pIdx + 1 : 0, 0, {
+          href: '#/inventory', icon: '📊', label: 'Inventory'
+        });
+      }
+    }
+    if (typeof MOBILE_NAV !== 'undefined' && Array.isArray(MOBILE_NAV)) {
+      if (!MOBILE_NAV.some(function (it) { return it.href === '#/inventory'; })) {
+        var mIdx = MOBILE_NAV.findIndex(function (it) { return it.href === '#/products'; });
+        MOBILE_NAV.splice(mIdx >= 0 ? mIdx + 1 : MOBILE_NAV.length, 0, {
+          href: '#/inventory', icon: '📊', label: 'Inventory'
+        });
+      }
+    }
+  } catch (e) {
+    console.warn('[Inventory] nav inject failed:', e);
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     53.2 — PAGE RENDERER
+     ══════════════════════════════════════════════════════════════ */
+  function renderInventory(content) {
+    if (!content) return;
+
+    var products     = DB.products        || [];
+    var invoiceItems = DB.invoice_items   || [];
+    var invoices     = DB.invoices        || [];
+    var suppliers    = DB.suppliers       || [];
+
+    /* ─── Enrich products with value metrics ─────────────────── */
+    var enriched = products.map(function (p) {
+      var stock = Number(p.stock) || 0;
+      var cost  = Number(p.cost)  || 0;
+      var cp    = Number(p.customer_price)  || 0;
+      var wp    = Number(p.wholesale_price) || 0;
+
+      var costVal      = stock * cost;
+      var retailVal    = stock * cp;
+      var wholesaleVal = stock * wp;
+
+      return Object.assign({}, p, {
+        _stock:           stock,
+        _cost:            cost,
+        _cp:              cp,
+        _wp:              wp,
+        _costVal:         costVal,
+        _retailVal:       retailVal,
+        _wholesaleVal:    wholesaleVal,
+        _profitRetail:    retailVal    - costVal,
+        _profitWholesale: wholesaleVal - costVal
+      });
+    });
+
+    /* ─── Totals ──────────────────────────────────────────────── */
+    var totalCostValue      = enriched.reduce(function (s, p) { return s + p._costVal; }, 0);
+    var totalRetailValue    = enriched.reduce(function (s, p) { return s + p._retailVal; }, 0);
+    var totalWholesaleValue = enriched.reduce(function (s, p) { return s + p._wholesaleVal; }, 0);
+    var totalProfitRetail   = totalRetailValue - totalCostValue;
+    var totalProfitWhole    = totalWholesaleValue - totalCostValue;
+    var skuTotal            = enriched.length;
+    var lowCount            = enriched.filter(function (p) { return isLowStock(p); }).length;
+    var outCount            = enriched.filter(function (p) { return isOutOfStock(p); }).length;
+
+    var retailMarginPct = totalRetailValue > 0 ? (totalProfitRetail / totalRetailValue) * 100 : 0;
+    var wholeMarginPct  = totalWholesaleValue > 0 ? (totalProfitWhole / totalWholesaleValue) * 100 : 0;
+
+    /* ─── Value by category ──────────────────────────────────── */
+    var catMap = {};
+    enriched.forEach(function (p) {
+      var c = p.category || 'Uncategorised';
+      catMap[c] = (catMap[c] || 0) + p._costVal;
+    });
+    var catEntries = Object.entries(catMap).sort(function (a, b) { return b[1] - a[1]; });
+
+    /* ─── Value by supplier ──────────────────────────────────── */
+    var supMap = {};
+    enriched.forEach(function (p) {
+      var k = p.supplier_id || '__none__';
+      supMap[k] = (supMap[k] || 0) + p._costVal;
+    });
+    var supEntries = Object.entries(supMap)
+      .map(function (kv) {
+        var sup = kv[0] === '__none__' ? null : suppliers.find(function (s) { return s.id === kv[0]; });
+        return {
+          id:    kv[0],
+          name:  sup ? sup.name : 'Unassigned',
+          type:  sup ? (sup.type || 'company') : null,
+          value: kv[1]
+        };
+      })
+      .sort(function (a, b) { return b.value - a.value; })
+      .slice(0, 8);
+
+    /* ─── Top 10 by stock value ──────────────────────────────── */
+    var topByCostValue = enriched.slice()
+      .sort(function (a, b) { return b._costVal - a._costVal; })
+      .slice(0, 10);
+
+    /* ─── Last-sold map (for slow movers) ────────────────────── */
+    var invById = {};
+    invoices.forEach(function (i) { invById[i.id] = i; });
+
+    var lastSold = {};
+    invoiceItems.forEach(function (it) {
+      if (!it.product_id) return;
+      var inv = invById[it.invoice_id];
+      if (!inv) return;
+      var d = txDate(inv, 'invoice_date');
+      if (!d) return;
+      if (!lastSold[it.product_id] || d > lastSold[it.product_id]) {
+        lastSold[it.product_id] = d;
+      }
+    });
+
+    var cutoff = daysAgoStr(60);
+    var slowMovers = enriched
+      .filter(function (p) {
+        if (p._stock <= 0)   return false;
+        if (p._costVal <= 0) return false;
+        var last = lastSold[p.id];
+        if (!last) return true;
+        return last < cutoff;
+      })
+      .map(function (p) { return Object.assign({}, p, { _lastSold: lastSold[p.id] || null }); })
+      .sort(function (a, b) { return b._costVal - a._costVal; })
+      .slice(0, 10);
+
+    /* ─── Page HTML ──────────────────────────────────────────── */
+    content.innerHTML = '' +
+      '<div class="page-head">' +
+        '<div>' +
+          '<h1>Inventory</h1>' +
+          '<p>Value, health, and money locked in stock · <b>' + skuTotal + '</b> SKU' + (skuTotal === 1 ? '' : 's') + '</p>' +
+        '</div>' +
+        '<div class="page-actions">' +
+          '<button class="btn btn-ghost" type="button" id="invx-csv">📤 Export CSV</button>' +
+          '<button class="btn btn-ghost" type="button" id="invx-pdf">📄 Export PDF</button>' +
+          '<button class="btn btn-primary" type="button" id="invx-add">+ Add Product</button>' +
+        '</div>' +
+      '</div>' +
+
+      /* ─── Row 1: Value snapshot ─────────────────────────── */
+      '<div class="grid-4" style="margin-bottom:16px">' +
+        '<div class="kpi">' +
+          '<div class="kpi-head"><div class="kpi-label">Total Cost Value</div><div class="kpi-icon" style="background:var(--amber-bg);color:var(--amber)">💰</div></div>' +
+          '<div class="kpi-value">' + rs(totalCostValue) + '</div>' +
+          '<div class="kpi-trend">cash locked in stock</div>' +
+        '</div>' +
+        '<div class="kpi">' +
+          '<div class="kpi-head"><div class="kpi-label">Customer Sell Value</div><div class="kpi-icon" style="background:var(--blue-bg);color:var(--blue)">🧑</div></div>' +
+          '<div class="kpi-value" style="color:var(--blue)">' + rs(totalRetailValue) + '</div>' +
+          '<div class="kpi-trend">if sold at retail tier</div>' +
+        '</div>' +
+        '<div class="kpi">' +
+          '<div class="kpi-head"><div class="kpi-label">Wholesale Sell Value</div><div class="kpi-icon" style="background:var(--purple-bg);color:var(--purple)">🏪</div></div>' +
+          '<div class="kpi-value" style="color:var(--purple)">' + rs(totalWholesaleValue) + '</div>' +
+          '<div class="kpi-trend">if sold at wholesale tier</div>' +
+        '</div>' +
+        '<div class="kpi">' +
+          '<div class="kpi-head"><div class="kpi-label">Active SKUs</div><div class="kpi-icon">📦</div></div>' +
+          '<div class="kpi-value">' + skuTotal + '</div>' +
+          '<div class="kpi-trend">in catalogue</div>' +
+        '</div>' +
+      '</div>' +
+
+      /* ─── Row 2: Profit potential + health ──────────────── */
+      '<div class="grid-4" style="margin-bottom:16px">' +
+        '<div class="kpi">' +
+          '<div class="kpi-head"><div class="kpi-label">Retail Profit Potential</div><div class="kpi-icon" style="background:var(--green-bg);color:var(--green)">📈</div></div>' +
+          '<div class="kpi-value" style="color:' + (totalProfitRetail >= 0 ? 'var(--green)' : 'var(--red)') + '">' + rs(totalProfitRetail) + '</div>' +
+          '<div class="kpi-trend">' + retailMarginPct.toFixed(1) + '% margin at retail</div>' +
+        '</div>' +
+        '<div class="kpi">' +
+          '<div class="kpi-head"><div class="kpi-label">Wholesale Profit Potential</div><div class="kpi-icon" style="background:var(--green-bg);color:var(--green)">📈</div></div>' +
+          '<div class="kpi-value" style="color:' + (totalProfitWhole >= 0 ? 'var(--green)' : 'var(--red)') + '">' + rs(totalProfitWhole) + '</div>' +
+          '<div class="kpi-trend">' + wholeMarginPct.toFixed(1) + '% margin at wholesale</div>' +
+        '</div>' +
+        '<div class="kpi">' +
+          '<div class="kpi-head"><div class="kpi-label">Low Stock</div><div class="kpi-icon" style="background:var(--red-bg);color:var(--red)">⚠️</div></div>' +
+          '<div class="kpi-value" style="color:' + (lowCount > 0 ? 'var(--red)' : 'var(--green)') + '">' + lowCount + '</div>' +
+          '<div class="kpi-trend">restock soon</div>' +
+        '</div>' +
+        '<div class="kpi">' +
+          '<div class="kpi-head"><div class="kpi-label">Out of Stock</div><div class="kpi-icon" style="background:var(--red-bg);color:var(--red)">🚫</div></div>' +
+          '<div class="kpi-value" style="color:' + (outCount > 0 ? 'var(--red)' : 'var(--green)') + '">' + outCount + '</div>' +
+          '<div class="kpi-trend">zero units on hand</div>' +
+        '</div>' +
+      '</div>' +
+
+      /* ─── Charts row ──────────────────────────────────────── */
+      '<div class="grid-2" style="margin-bottom:16px">' +
+        '<div class="card">' +
+          '<div class="card-title">Value by Category <small>at cost</small></div>' +
+          '<div style="position:relative;height:280px"><canvas id="invx-cat-chart"></canvas></div>' +
+        '</div>' +
+        '<div class="card">' +
+          '<div class="card-title">Stock Health <small>OK / LOW / OUT</small></div>' +
+          '<div style="position:relative;height:280px"><canvas id="invx-health-chart"></canvas></div>' +
+        '</div>' +
+      '</div>' +
+
+      /* ─── Supplier + Top 10 ──────────────────────────────── */
+      '<div class="grid-2" style="margin-bottom:16px">' +
+        '<div class="card">' +
+          '<div class="card-title">Value by Supplier <small>at cost</small></div>' +
+          (!supEntries.length
+            ? '<p style="color:var(--ink-3);font-size:var(--fs-sm);text-align:center;padding:20px 0">No supplier-linked products</p>'
+            : '<div style="display:flex;flex-direction:column;gap:10px">' +
+                supEntries.map(function (s) {
+                  var pct = totalCostValue > 0 ? (s.value / totalCostValue) * 100 : 0;
+                  var chipCls   = s.type === 'vendor' ? 'chip-purple' : (s.type === 'company' ? 'chip-blue' : 'chip-gray');
+                  var chipLabel = s.type === 'vendor' ? 'Vendor' : (s.type === 'company' ? 'Company' : '—');
+                  return '' +
+                    '<div>' +
+                      '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px">' +
+                        '<div style="display:flex;align-items:center;gap:6px;min-width:0">' +
+                          '<span style="font-weight:600;color:var(--ink);font-size:var(--fs-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(s.name) + '</span>' +
+                          '<span class="chip ' + chipCls + ' chip-xs">' + chipLabel + '</span>' +
+                        '</div>' +
+                        '<b style="font-variant-numeric:tabular-nums;color:var(--ink);white-space:nowrap">' + rs(s.value) + '</b>' +
+                      '</div>' +
+                      '<div style="height:5px;background:var(--bg-deep);border-radius:2px;overflow:hidden">' +
+                        '<div style="height:100%;width:' + pct + '%;background:var(--primary)"></div>' +
+                      '</div>' +
+                      '<div style="font-size:var(--fs-xs);color:var(--ink-3);margin-top:2px">' + pct.toFixed(1) + '% of inventory</div>' +
+                    '</div>';
+                }).join('') +
+              '</div>') +
+        '</div>' +
+
+        '<div class="card">' +
+          '<div class="card-title">Top 10 by Stock Value <small>biggest cash tied up</small></div>' +
+          (!topByCostValue.length
+            ? '<p style="color:var(--ink-3);font-size:var(--fs-sm);text-align:center;padding:20px 0">No products</p>'
+            : '<div style="display:flex;flex-direction:column;gap:8px">' +
+                topByCostValue.map(function (p, i) {
+                  var d = productDisplay(p);
+                  return '' +
+                    '<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px dashed var(--border);font-size:var(--fs-sm)">' +
+                      '<div style="flex:1;min-width:0">' +
+                        '<div style="font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+                          '<span style="color:var(--primary-hover);font-weight:800">' + (i + 1) + '.</span> ' + esc(p.name) +
+                        '</div>' +
+                        '<div style="font-size:var(--fs-xs);color:var(--ink-3);margin-top:2px">' + esc(d.stockLabel) + '</div>' +
+                      '</div>' +
+                      '<b style="color:var(--amber);font-variant-numeric:tabular-nums;white-space:nowrap">' + rs(p._costVal) + '</b>' +
+                    '</div>';
+                }).join('') +
+              '</div>') +
+        '</div>' +
+      '</div>' +
+
+      /* ─── Slow movers ────────────────────────────────────── */
+      (slowMovers.length
+        ? '<div class="card" style="margin-bottom:16px">' +
+            '<div class="card-title">Slow Movers <small>not sold in 60+ days</small></div>' +
+            '<div class="tbl-wrap"><table>' +
+              '<thead><tr>' +
+                '<th>Product</th><th>Category</th>' +
+                '<th style="text-align:right">Stock</th>' +
+                '<th style="text-align:right">Cost Value</th>' +
+                '<th>Last Sold</th><th></th>' +
+              '</tr></thead>' +
+              '<tbody>' +
+                slowMovers.map(function (p) {
+                  var d = productDisplay(p);
+                  var last = p._lastSold ? fmtDate(p._lastSold) : 'Never';
+                  return '' +
+                    '<tr>' +
+                      '<td><strong>' + esc(p.name) + '</strong></td>' +
+                      '<td>' + categoryChip(p.category) + '</td>' +
+                      '<td style="text-align:right;font-weight:600">' + esc(d.stockLabel) + '</td>' +
+                      '<td style="text-align:right;color:var(--amber);font-weight:600;font-variant-numeric:tabular-nums">' + rs(p._costVal) + '</td>' +
+                      '<td style="color:' + (p._lastSold ? 'var(--ink-2)' : 'var(--red)') + ';font-size:var(--fs-sm)">' + esc(last) + '</td>' +
+                      '<td style="text-align:right"><button class="btn btn-ghost btn-sm" type="button" data-edit-product="' + p.id + '">Edit</button></td>' +
+                    '</tr>';
+                }).join('') +
+              '</tbody>' +
+            '</table></div>' +
+            '<p style="font-size:var(--fs-xs);color:var(--ink-3);margin-top:10px;padding:0 4px">💡 Consider discounting these to release the cash.</p>' +
+          '</div>'
+        : '') +
+
+      /* ─── Full table ─────────────────────────────────────── */
+      '<div class="card" style="padding:0;overflow:hidden">' +
+        '<div class="card-title" style="padding:14px 18px;margin:0;border-bottom:1px solid var(--border);background:var(--card-alt)">' +
+          'All products — value breakdown <small><span id="invx-count">0</span> shown</small>' +
+        '</div>' +
+
+        '<div style="padding:12px 18px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;border-bottom:1px solid var(--border)">' +
+          '<div style="flex:2;min-width:180px">' +
+            '<label class="label">Search</label>' +
+            '<input class="input" id="invx-search" placeholder="Product or category…" autocomplete="off">' +
+          '</div>' +
+          '<div style="flex:1;min-width:140px">' +
+            '<label class="label">Category</label>' +
+            '<select class="input" id="invx-cat">' +
+              '<option value="">All</option>' +
+              Array.from(new Set(products.map(function (p) { return p.category; }).filter(Boolean)))
+                .sort(function (a, b) { return a.localeCompare(b); })
+                .map(function (c) { return '<option value="' + esc(c) + '">' + esc(c) + '</option>'; })
+                .join('') +
+            '</select>' +
+          '</div>' +
+          '<div style="flex:1;min-width:140px">' +
+            '<label class="label">Stock</label>' +
+            '<select class="input" id="invx-stock">' +
+              '<option value="">All</option>' +
+              '<option value="ok">Healthy</option>' +
+              '<option value="low">Low</option>' +
+              '<option value="out">Out</option>' +
+            '</select>' +
+          '</div>' +
+          '<div style="flex:1;min-width:160px">' +
+            '<label class="label">Sort</label>' +
+            '<select class="input" id="invx-sort">' +
+              '<option value="costVal-desc">Cost value (high)</option>' +
+              '<option value="retailVal-desc">Retail value (high)</option>' +
+              '<option value="profit-desc">Profit (high)</option>' +
+              '<option value="stock">Stock (low first)</option>' +
+              '<option value="stock-desc">Stock (high first)</option>' +
+              '<option value="name">Name A → Z</option>' +
+            '</select>' +
+          '</div>' +
+        '</div>' +
+
+        '<div class="tbl-wrap" style="border:0;border-radius:0">' +
+          '<table>' +
+            '<thead><tr>' +
+              '<th>Product</th>' +
+              '<th>Category</th>' +
+              '<th style="text-align:right">Stock</th>' +
+              '<th style="text-align:right">Cost Value</th>' +
+              '<th style="text-align:right">Retail Value</th>' +
+              '<th style="text-align:right">Wholesale Value</th>' +
+              '<th style="text-align:right">Profit (retail)</th>' +
+              '<th>Status</th>' +
+              '<th></th>' +
+            '</tr></thead>' +
+            '<tbody id="invx-tbody"></tbody>' +
+          '</table>' +
+        '</div>' +
+      '</div>';
+
+    /* ─── Filter + sort + render rows ────────────────────────── */
+    function renderRows() {
+      var search      = (document.getElementById('invx-search').value || '').toLowerCase().trim();
+      var cat         = document.getElementById('invx-cat').value;
+      var stockFilter = document.getElementById('invx-stock').value;
+      var sortBy      = document.getElementById('invx-sort').value;
+
+      var arr = enriched.slice();
+
+      if (search) {
+        arr = arr.filter(function (p) {
+          var hay = ((p.name || '') + ' ' + (p.category || '')).toLowerCase();
+          return hay.indexOf(search) !== -1;
+        });
+      }
+      if (cat) arr = arr.filter(function (p) { return p.category === cat; });
+
+      if (stockFilter === 'low')      arr = arr.filter(function (p) { return isLowStock(p) && !isOutOfStock(p); });
+      else if (stockFilter === 'out') arr = arr.filter(function (p) { return isOutOfStock(p); });
+      else if (stockFilter === 'ok')  arr = arr.filter(function (p) { return !isLowStock(p); });
+
+      switch (sortBy) {
+        case 'costVal-desc':   arr.sort(function (a, b) { return b._costVal      - a._costVal;      }); break;
+        case 'retailVal-desc': arr.sort(function (a, b) { return b._retailVal    - a._retailVal;    }); break;
+        case 'profit-desc':    arr.sort(function (a, b) { return b._profitRetail - a._profitRetail; }); break;
+        case 'stock':          arr.sort(function (a, b) { return a._stock        - b._stock;        }); break;
+        case 'stock-desc':     arr.sort(function (a, b) { return b._stock        - a._stock;        }); break;
+        case 'name':           arr.sort(function (a, b) { return (a.name || '').localeCompare(b.name || ''); }); break;
+      }
+
+      document.getElementById('invx-count').textContent = arr.length;
+
+      var tbody = document.getElementById('invx-tbody');
+      if (!arr.length) {
+        tbody.innerHTML = '<tr><td colspan="9" style="padding:0">' +
+          emptyStateHTML('📦', 'No products match', 'Try clearing filters or add a product.', '') +
+        '</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = arr.map(function (p) {
+        var d        = productDisplay(p);
+        var supplier = p.supplier_id ? suppliers.find(function (s) { return s.id === p.supplier_id; }) : null;
+        var profitCol = p._profitRetail >= 0 ? 'var(--green)' : 'var(--red)';
+
+        return '' +
+          '<tr>' +
+            '<td>' +
+              '<strong>' + esc(p.name) + '</strong>' +
+              (p.dual ? '<span class="chip chip-primary chip-xs" style="margin-left:6px">DUAL</span>' : '') +
+              (supplier ? '<div style="font-size:var(--fs-xs);color:var(--primary-hover);margin-top:2px">' + esc(supplier.name) + '</div>' : '') +
+            '</td>' +
+            '<td>' + categoryChip(p.category) + '</td>' +
+            '<td style="text-align:right;font-weight:600;font-variant-numeric:tabular-nums">' + esc(d.stockLabel) + '</td>' +
+            '<td style="text-align:right;color:var(--amber);font-weight:600;font-variant-numeric:tabular-nums">' + rs(p._costVal) + '</td>' +
+            '<td style="text-align:right;color:var(--blue);font-variant-numeric:tabular-nums">' + rs(p._retailVal) + '</td>' +
+            '<td style="text-align:right;color:var(--purple);font-variant-numeric:tabular-nums">' + rs(p._wholesaleVal) + '</td>' +
+            '<td style="text-align:right;color:' + profitCol + ';font-weight:600;font-variant-numeric:tabular-nums">' + rs(p._profitRetail) + '</td>' +
+            '<td>' + stockBadge(p) + '</td>' +
+            '<td class="td-actions">' +
+              '<button class="btn btn-ghost btn-sm" type="button" data-restock="' + p.id + '">+ Stock</button>' +
+              '<button class="btn btn-ghost btn-sm" type="button" data-edit-product="' + p.id + '">Edit</button>' +
+            '</td>' +
+          '</tr>';
+      }).join('');
+    }
+
+    /* ─── Row-action delegation ──────────────────────────────── */
+    content.addEventListener('click', function (e) {
+      var editBtn = e.target.closest('[data-edit-product]');
+      if (editBtn) {
+        var prod = DB.products.find(function (x) { return x.id === editBtn.dataset.editProduct; });
+        if (prod && typeof openProductForm === 'function') openProductForm(prod);
+        return;
+      }
+      var restockBtn = e.target.closest('[data-restock]');
+      if (restockBtn) {
+        if (typeof openRestockForm === 'function') openRestockForm(restockBtn.dataset.restock);
+        return;
+      }
+    });
+
+    /* ─── Filter events ─────────────────────────────────────── */
+    ['invx-search', 'invx-cat', 'invx-stock', 'invx-sort'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) { el.oninput = renderRows; el.onchange = renderRows; }
+    });
+
+    renderRows();
+
+    /* ─── "+ Add Product" ───────────────────────────────────── */
+    var addBtn = document.getElementById('invx-add');
+    if (addBtn) {
+      addBtn.onclick = function () {
+        if (typeof openProductForm === 'function') openProductForm();
+      };
+    }
+
+    /* ─── Charts ────────────────────────────────────────────── */
+    if (Array.isArray(charts)) {
+      charts.forEach(function (c) { try { c.destroy(); } catch (e) {} });
+    }
+    charts = [];
+
+    var reduce = !!(typeof SETTINGS !== 'undefined' && SETTINGS.reduced_effects);
+
+    /* Category chart (horizontal bar) */
+    var catCanvas = document.getElementById('invx-cat-chart');
+    if (catCanvas && typeof Chart !== 'undefined' && catEntries.length) {
+      charts.push(new Chart(catCanvas, {
+        type: 'bar',
+        data: {
+          labels: catEntries.map(function (e) {
+            return e[0].length > 20 ? e[0].slice(0, 20) + '…' : e[0];
+          }),
+          datasets: [{
+            data: catEntries.map(function (e) { return e[1]; }),
+            backgroundColor: catEntries.map(function (_, i) {
+              var p = ['#C79A28','#E0B84A','#EFD27C','#F4E4B4','#B88A1E','#8F6914','#D4A93A','#E5C97A'];
+              return p[i % p.length];
+            }),
+            borderRadius: 6,
+            maxBarThickness: 22
+          }]
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: reduce ? false : { duration: 400 },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: '#1F2937',
+              callbacks: { label: function (ctx) { return rs(ctx.parsed.x); } }
+            }
+          },
+          scales: {
+            x: {
+              beginAtZero: true,
+              ticks: {
+                color: '#6B7280', font: { size: 10 },
+                callback: function (v) { return '₹' + Number(v).toLocaleString('en-IN'); }
+              },
+              grid: { color: '#F1F5F9', drawBorder: false }
+            },
+            y: {
+              ticks: { color: '#1F2937', font: { size: 11, weight: '600' } },
+              grid: { display: false }
+            }
+          }
+        }
+      }));
+    } else if (catCanvas) {
+      var cc = catCanvas.getContext('2d');
+      cc.clearRect(0, 0, catCanvas.width, catCanvas.height);
+    }
+
+    /* Health doughnut */
+    var healthCanvas = document.getElementById('invx-health-chart');
+    if (healthCanvas && typeof Chart !== 'undefined') {
+      var okCount   = enriched.filter(function (p) { return !isLowStock(p); }).length;
+      var lowOnly   = enriched.filter(function (p) { return isLowStock(p) && !isOutOfStock(p); }).length;
+      var totalSkus = okCount + lowOnly + outCount;
+
+      charts.push(new Chart(healthCanvas, {
+        type: 'doughnut',
+        data: {
+          labels: ['Healthy', 'Low', 'Out'],
+          datasets: [{
+            data: [okCount, lowOnly, outCount],
+            backgroundColor: ['#15803D', '#B45309', '#B91C1C'],
+            borderWidth: 0,
+            hoverOffset: 6
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: reduce ? false : { duration: 400 },
+          cutout: '65%',
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: { color: '#4B5563', font: { size: 11 }, usePointStyle: true, boxWidth: 8, padding: 12 }
+            },
+            tooltip: {
+              backgroundColor: '#1F2937',
+              callbacks: {
+                label: function (ctx) {
+                  var pct = totalSkus > 0 ? (ctx.parsed / totalSkus) * 100 : 0;
+                  return ctx.label + ': ' + ctx.parsed + ' (' + pct.toFixed(1) + '%)';
+                }
+              }
+            }
+          }
+        }
+      }));
+    }
+
+    /* ─── CSV export ────────────────────────────────────────── */
+    var csvBtn = document.getElementById('invx-csv');
+    if (csvBtn) {
+      csvBtn.onclick = function () {
+        var header = [
+          'Product','Category','Unit','Stock','Cost/unit','Customer Price','Wholesale Price',
+          'Cost Value','Retail Value','Wholesale Value','Retail Profit','Status'
+        ];
+        var rows = enriched.map(function (p) {
+          var unitLabel = p.dual
+            ? (p.primary_unit === 'pack_unit' ? (p.pack_unit || 'box') : (p.base_unit || 'piece'))
+            : (p.unit || '');
+          var status = isOutOfStock(p) ? 'OUT' : (isLowStock(p) ? 'LOW' : 'OK');
+          return [
+            p.name || '',
+            p.category || '',
+            unitLabel,
+            p._stock,
+            p._cost,
+            p._cp,
+            p._wp,
+            p._costVal.toFixed(2),
+            p._retailVal.toFixed(2),
+            p._wholesaleVal.toFixed(2),
+            p._profitRetail.toFixed(2),
+            status
+          ];
+        });
+        var all = [header].concat(rows);
+        var csv = all.map(function (row) {
+          return row.map(function (cell) {
+            var s = String(cell == null ? '' : cell);
+            if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+            return s;
+          }).join(',');
+        }).join('\n');
+
+        var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        downloadBlob(blob, 'Inventory-' + todayStr() + '.csv');
+        toast('CSV downloaded', 'success');
+      };
+    }
+
+    /* ─── PDF export ────────────────────────────────────────── */
+    var pdfBtn = document.getElementById('invx-pdf');
+    if (pdfBtn) {
+      pdfBtn.onclick = function () {
+        if (!window.PDFMaker || typeof window.PDFMaker.report !== 'function') {
+          toast('PDF module not loaded', 'info');
+          return;
+        }
+        var rows = enriched.slice()
+          .sort(function (a, b) { return b._costVal - a._costVal; })
+          .map(function (p) {
+            var d = productDisplay(p);
+            var status = isOutOfStock(p) ? 'OUT' : (isLowStock(p) ? 'LOW' : 'OK');
+            return [
+              p.name,
+              p.category || '-',
+              d.stockLabel,
+              inr(p._costVal),
+              inr(p._retailVal),
+              inr(p._wholesaleVal),
+              inr(p._profitRetail),
+              status
+            ];
+          });
+
+        window.PDFMaker.report({
+          title: 'Inventory Report',
+          meta: 'Generated ' + new Date().toLocaleString('en-IN') + ' · ' + skuTotal + ' SKUs',
+          kpis: [
+            ['Cost Value',      inr(totalCostValue)],
+            ['Retail Value',    inr(totalRetailValue)],
+            ['Wholesale Value', inr(totalWholesaleValue)],
+            ['Profit (retail)', inr(totalProfitRetail)],
+            ['Low / Out',       lowCount + ' / ' + outCount]
+          ],
+          tables: [{
+            title: 'All products',
+            head: ['Product','Category','Stock','Cost Value','Retail Value','Wholesale Value','Profit','Status'],
+            rows: rows
+          }],
+          filename: 'Inventory-' + todayStr() + '.pdf'
+        });
+      };
+    }
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     53.3 — ROUTE WRAPPER
+     Chains onto the current window.route (Block 52 already wrapped
+     it). Debounced so Block 49's anonymous hashchange listener and
+     our own listener don't cause a double render. Falls back to
+     syncDB() so direct navigation to #/inventory works.
+     ══════════════════════════════════════════════════════════════ */
+  var _origRoute = window.route;
+  var _lastInvHash  = '';
+  var _lastInvStamp = 0;
+  var _INV_DEBOUNCE_MS = 120;
+
+  if (typeof _origRoute === 'function') {
+    window.route = async function () {
+      var rawHash = location.hash || '#/';
+      var path    = rawHash.split('?')[0];
+
+      if (path === '#/inventory') {
+        /* ─── Auth gate ─────────────────────────────────── */
+        if (typeof isLoggedIn === 'function' && !isLoggedIn()) {
+          if (typeof renderLogin === 'function') renderLogin();
+          return;
+        }
+
+        /* ─── Debounce duplicate renders ───────────────── */
+        var now = Date.now();
+        if (_lastInvHash === rawHash && (now - _lastInvStamp) < _INV_DEBOUNCE_MS) {
+          return;
+        }
+        _lastInvHash  = rawHash;
+        _lastInvStamp = now;
+
+        /* ─── Ensure data loaded ───────────────────────── */
+        if (window.DB_SYNCED !== true && typeof syncDB === 'function') {
+          try { await syncDB(); } catch (e) { console.warn('[Inventory] syncDB failed:', e); }
+        }
+
+        /* ─── Render shell + page ──────────────────────── */
+        if (typeof renderLayout === 'function') renderLayout();
+
+        var content = document.getElementById('content');
+        if (content) {
+          try {
+            renderInventory(content);
+          } catch (err) {
+            console.error('[Inventory] render failed:', err);
+            content.innerHTML =
+              '<div class="card" style="border-color:var(--red-border);background:var(--red-bg)">' +
+                '<div style="font-weight:700;color:var(--red);margin-bottom:6px">⚠️ Inventory failed to load</div>' +
+                '<div style="font-size:var(--fs-sm);color:var(--red);font-family:var(--font-mono);word-break:break-word">' +
+                  (typeof esc === 'function' ? esc(err.message || String(err)) : String(err)) +
+                '</div>' +
+              '</div>';
+          }
+        }
+
+        try { if (typeof refreshNavActive === 'function') refreshNavActive(); } catch (e) {}
+        return;
+      }
+
+      return _origRoute.apply(this, arguments);
+    };
+
+    try { window.removeEventListener('hashchange', _origRoute); } catch (e) {}
+    window.addEventListener('hashchange', window.route);
+  }
+
+  /* Expose for debugging */
+  window.renderInventory = renderInventory;
+
+  console.log('[Inventory] Block 53 ready');
+})();
+     
 </script>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     END BLOCK 53 — INVENTORY
+     ══════════════════════════════════════════════════════════════════ -->
 </body>
 </html>
 
