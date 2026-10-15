@@ -5449,18 +5449,18 @@ function lineDeductBaseQty(line){
 }
 
 /* ══════════════════════════════════════════════════════════════
-   14k — PARTY STATS (Updated with Opening Balance)
+   14k — PARTY STATS (Fixed for Credit Notes)
    ══════════════════════════════════════════════════════════════ */
 function partyStats(partyId, partyType){
-  const table = partyType === 'retailer' ? 'retailers' : 'customers';
-  const party = (DB[table] || []).find(x => x.id === partyId);
-  const opening = Number(party?.opening_balance || 0);
-
   const invs = DB.invoices.filter(i => i.party_id === partyId && i.party_type === partyType);
   const pays = DB.payments.filter(p => p.party_id === partyId && p.party_type === partyType);
 
-  const total_billed = opening + invs.reduce((s, i) => s + Number(i.total || 0), 0);
-  const invoice_paid = invs.reduce((s, i) => s + Number(i.paid  || 0), 0);
+  const total_billed = invs.reduce((s, i) => {
+    const isCredit = String(i.invoice_no || '').startsWith('RET-') || Number(i.total) < 0;
+    return s + (isCredit ? -Math.abs(Number(i.total || 0)) : Number(i.total || 0));
+  }, 0);
+
+  const invoice_paid = invs.reduce((s, i) => s + Number(i.paid || 0), 0);
   const extra_paid   = pays.reduce((s, p) => s + Number(p.amount || 0), 0);
   const total_paid   = invoice_paid + extra_paid;
 
@@ -12260,16 +12260,19 @@ async function renderPartyProfile(content, id, type){
         <small>Running balance</small>
       </div>
       ${(() => {
-        /* Build combined timeline */
+                /* Build combined timeline with correct Credit Note handling */
         const timeline = [
-          ...invoices.map(i => ({
-            date: txDate(i, 'invoice_date'),
-            kind: 'Invoice',
-            ref:  i.invoice_no || 'INV',
-            id:   i.id,
-            debit:  Number(i.total || 0),
-            credit: 0
-          })),
+          ...invoices.map(i => {
+            const isCredit = String(i.invoice_no || '').startsWith('RET-') || Number(i.total) < 0;
+            return {
+              date: txDate(i, 'invoice_date'),
+              kind: isCredit ? 'Credit Note' : 'Invoice',
+              ref:  i.invoice_no || 'INV',
+              id:   i.id,
+              debit:  isCredit ? 0 : Number(i.total || 0),
+              credit: isCredit ? Math.abs(Number(i.total || 0)) : 0
+            };
+          }),
           ...payments.map(p => ({
             date: txDate(p, 'payment_date'),
             kind: 'Payment',
@@ -21837,8 +21840,8 @@ function injectPDFButtons(){
   /* ══════════════════════════════════════════════════════
      2. PARTY / SUPPLIER PROFILES
      ══════════════════════════════════════════════════════ */
-  const profileMatch = hash.match(/^#\/(customer|retailer|company|vendor)\/(.+)$/);
-  if(profileMatch && !document.getElementById('btn-pdf-statement')){
+    const profileMatch = hash.match(/^#\/(customer|retailer|company|vendor)\/(.+)$/);
+  if(profileMatch && !document.getElementById('btn-print-statement') && !document.getElementById('btn-pdf-statement')){
     const type = profileMatch[1];
     const id   = profileMatch[2];
     const actions = content.querySelector('.page-actions');
