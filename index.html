@@ -12286,7 +12286,7 @@ async function renderPartyProfile(content, id, type){
         <small>Running balance</small>
       </div>
       ${(() => {
-        const timeline = [
+               const timeline = [
           ...invoices.map(i => {
             const isCredit = Number(i.total) < 0;
             return {
@@ -12298,6 +12298,20 @@ async function renderPartyProfile(content, id, type){
               credit: isCredit ? Math.abs(Number(i.total || 0)) : 0
             };
           }),
+
+          /* ✅ FIX: amounts paid at invoice time live on invoices.paid,
+             not in the payments table — add them as credits */
+          ...invoices
+            .filter(i => Number(i.paid || 0) > 0)
+            .map(i => ({
+              date:   txDate(i, 'invoice_date'),
+              kind:   'Paid at invoice',
+              ref:    (i.invoice_no || 'INV') + ' — paid',
+              id:     i.id,
+              debit:  0,
+              credit: Number(i.paid || 0)
+            })),
+
           ...payments.map(p => ({
             date:   txDate(p, 'payment_date'),
             kind:   'Payment',
@@ -21164,13 +21178,21 @@ window.A4Print = (function(){
       .filter(p => p.party_id === party.id && p.party_type === type);
 
     /* Combined timeline */
-    const timeline = [
+        const timeline = [
       ...invs.map(i => ({
         date:   txDate(i, 'invoice_date'),
         ref:    i.invoice_no || 'INV',
         debit:  Number(i.total || 0),
         credit: 0
       })),
+      ...invs
+        .filter(i => Number(i.paid || 0) > 0)
+        .map(i => ({
+          date:   txDate(i, 'invoice_date'),
+          ref:    (i.invoice_no || 'INV') + ' — paid',
+          debit:  0,
+          credit: Number(i.paid || 0)
+        })),
       ...pays.map(p => ({
         date:   txDate(p, 'payment_date'),
         ref:    (p.mode || 'payment').toUpperCase() + (p.notes ? ' — ' + p.notes : ''),
@@ -21240,13 +21262,21 @@ window.A4Print = (function(){
 
     const tt = supplierTotals(supplier.id);
 
-    const timeline = [
+       const timeline = [
       ...bills.map(b => ({
         date:   txDate(b, 'bill_date'),
         ref:    b.bill_no || 'Bill',
         debit:  Number(b.total || 0),
         credit: 0
       })),
+      ...bills
+        .filter(b => Number(b.paid || 0) > 0)
+        .map(b => ({
+          date:   txDate(b, 'bill_date'),
+          ref:    (b.bill_no || 'Bill') + ' — paid',
+          debit:  0,
+          credit: Number(b.paid || 0)
+        })),
       ...pays.map(p => ({
         date:   txDate(p, 'payment_date'),
         ref:    (p.mode || 'payment').toUpperCase() + (p.notes ? ' — ' + p.notes : ''),
@@ -21254,7 +21284,6 @@ window.A4Print = (function(){
         credit: Number(p.amount || 0)
       }))
     ].sort((a, b) => a.date.localeCompare(b.date));
-
     let balance = tt.opening;
     const rows = timeline.map(t => {
       balance += t.debit - t.credit;
