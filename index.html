@@ -12554,9 +12554,19 @@ function renderNewInvoice(content, partyType, preselectPartyId){
         </div>
       ` : ''}
       <div class="form-row-3">
-        <div class="field"><label class="label">Discount (₹)</label><input class="input" type="number" step="any" min="0" id="ni-disc" value="0"></div>
-        <div class="field"><label class="label">Paid now (₹)</label><input class="input" type="number" step="any" min="0" id="ni-paid" value="0"></div>
-        <div class="field"><label class="label">Notes</label><input class="input" type="text" id="ni-notes" maxlength="200" placeholder="Optional"></div>
+              <div class="form-row-3">
+        <div class="field">
+          <label class="label">Discount (₹)</label>
+          <input class="input" type="number" step="any" min="0" id="ni-disc" value="0" placeholder="0.00">
+        </div>
+        <div class="field">
+          <label class="label">Paid now (₹)</label>
+          <input class="input" type="number" step="any" min="0" id="ni-paid" value="0" placeholder="0.00">
+        </div>
+        <div class="field">
+          <label class="label">Notes</label>
+          <input class="input" type="text" id="ni-notes" maxlength="200" placeholder="Optional">
+        </div>
       </div>
       <div id="ni-summary" style="background:var(--card-alt);padding:14px;border-radius:var(--r-md);border:1px solid var(--border);display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;font-size:var(--fs-sm)"></div>
       <div class="form-actions">
@@ -12710,8 +12720,10 @@ function renderNewInvoice(content, partyType, preselectPartyId){
     `;
   }
 
+    // ✅ FIX: Ensure both Discount and Paid inputs trigger the summary update
   $('#ni-disc').oninput = updateSummary;
   $('#ni-paid').oninput = updateSummary;
+  $('#ni-paid').addEventListener('change', updateSummary); // Backup for some browsers
   const gstToggle = $('#ni-gst');
   if(gstToggle) gstToggle.onchange = updateSummary;
   renderLines();
@@ -13905,14 +13917,14 @@ function openPurchaseBillForm(supplier, existing){
         </div>
       ` : ''}
 
-      <div class="form-row-2">
+           <div class="form-row-2">
         <div class="field">
           <label class="label">Bill number</label>
           <input class="input" type="text" name="bill_no" maxlength="60" value="${esc(b.bill_no || '')}" placeholder="Company's bill no." autofocus>
         </div>
         <div class="field">
           <label class="label">Discount (₹)</label>
-          <input class="input" type="number" step="any" min="0" id="pb-disc" name="discount" value="${b.discount || 0}">
+          <input class="input" type="number" step="any" min="0" id="pb-disc" name="discount" value="${b.discount || 0}" placeholder="0.00">
         </div>
       </div>
 
@@ -14081,20 +14093,34 @@ function openPurchaseBillForm(supplier, existing){
       updateSummary();
     }
 
-    function updateSummary(){
+        function updateSummary(){
       const sumEl = root.querySelector('#pb-summary');
       if(!sumEl) return;
+      
       const sub  = billLines.reduce((s, l) => s + Number(l.total || 0), 0);
       const disc = Number(root.querySelector('#pb-disc').value) || 0;
       const total = round2(Math.max(0, sub - disc));
+      
+      // ✅ FIX: Read the "Paid now" input and calculate Due
+      const paidInput = root.querySelector('input[name="paid"]');
+      const paid = Number(paidInput ? paidInput.value : 0) || 0;
+      const due = round2(Math.max(0, total - paid));
+
       sumEl.innerHTML = `
         <div style="display:flex;justify-content:space-between"><span style="color:var(--ink-3)">Subtotal</span><b>${rs(sub)}</b></div>
         <div style="display:flex;justify-content:space-between"><span style="color:var(--ink-3)">Discount</span><b style="color:var(--red)">− ${rs(disc)}</b></div>
         <div style="display:flex;justify-content:space-between;padding-top:6px;border-top:1px solid var(--border)"><b>Total</b><b style="color:var(--primary-hover);font-size:var(--fs-md)">${rs(total)}</b></div>
+        <div style="display:flex;justify-content:space-between;padding-top:6px;border-top:1px dashed var(--border)"><span style="color:var(--ink-3)">Paid Now</span><b style="color:var(--green)">${rs(paid)}</b></div>
+        <div style="display:flex;justify-content:space-between"><b>Balance Due</b><b style="color:${due > 0 ? 'var(--red)' : 'var(--green)'}">${rs(due)}</b></div>
       `;
     }
 
+    // ✅ FIX: Wire up the event listeners for both Discount and Paid inputs
     root.querySelector('#pb-disc').oninput = updateSummary;
+    const paidInput = root.querySelector('input[name="paid"]');
+    if (paidInput) {
+      paidInput.oninput = updateSummary;
+    }
     renderLines();
     root.querySelector('#pbill-cancel').onclick = () => closeModal(root);
 
