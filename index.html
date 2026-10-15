@@ -12208,7 +12208,6 @@ async function renderPartyProfile(content, id, type){
           : `
             <div style="display:flex;flex-direction:column;gap:8px">
               ${invoices.slice(0, 12).map(i => {
-                // ✅ Fix: Strictly check negative total for credit note
                 const isCredit = Number(i.total) < 0;
                 const displayTotal = isCredit ? -Math.abs(Number(i.total || 0)) : Number(i.total || 0);
                 return `
@@ -12272,7 +12271,6 @@ async function renderPartyProfile(content, id, type){
         <small>Running balance</small>
       </div>
       ${(() => {
-        // ✅ Fix: Strictly check negative total for credit note
         const timeline = [
           ...invoices.map(i => {
             const isCredit = Number(i.total) < 0;
@@ -12399,6 +12397,21 @@ async function renderPartyProfile(content, id, type){
   });
 }
 
+/* ══════════════════════════════════════════════════════════
+   29c-route — CUSTOMER PROFILE
+   ══════════════════════════════════════════════════════════ */
+
+async function renderCustomerProfile(content, id){
+  await renderPartyProfile(content, id, 'customer');
+}
+
+/* ══════════════════════════════════════════════════════════
+   29c-route — RETAILER PROFILE
+   ══════════════════════════════════════════════════════════ */
+
+async function renderRetailerProfile(content, id){
+  await renderPartyProfile(content, id, 'retailer');
+}
 /* ══════════════════════════════════════════════════════════
    29d — PARTY PAYMENT FORM (customer + retailer)
    Records a payment received from a customer or retailer.
