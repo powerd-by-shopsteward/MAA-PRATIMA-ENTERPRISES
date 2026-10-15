@@ -4958,12 +4958,11 @@ const SUPPLIER_TYPE_LABELS = {
    ─────────────────────────────────────────────────────────── */
 const INVOICE_PREFIX = {
   customer: 'CUS-',
-  retailer: 'RET-'
+  retailer: 'RTL-'  // ✅ Changed from 'RET-' to 'RTL-' to stop clashing with returns
 };
 
 /* Returns (credit notes) always use this prefix */
-const RETURN_PREFIX = 'RET-';
-
+const RETURN_PREFIX = 'CRN-'; // ✅ Changed from 'RET-' to 'CRN-'
 /* Number padding — CUS-0001 */
 const INVOICE_PAD = 4;
 
@@ -5449,20 +5448,18 @@ function lineDeductBaseQty(line){
 }
 
 /* ══════════════════════════════════════════════════════════════
-   14k — PARTY STATS (Fixed — no phantom paid, no negative billed)
+   14k — PARTY STATS (Fixed for Prefix Clash)
    ══════════════════════════════════════════════════════════════ */
 function partyStats(partyId, partyType){
   const invs = DB.invoices.filter(i => i.party_id === partyId && i.party_type === partyType);
   const pays = DB.payments.filter(p => p.party_id === partyId && p.party_type === partyType);
 
-  let total_invoiced = 0;   // positive: real invoices only
-  let total_returned = 0;   // positive: credit notes only (abs value)
+  let total_invoiced = 0;
+  let total_returned = 0;
 
   invs.forEach(i => {
-    const isCredit =
-      String(i.invoice_no || '').startsWith('RET-') ||
-      Number(i.total) < 0;
-
+    // ✅ Fix: Identify returns strictly by negative total, not by prefix.
+    const isCredit = Number(i.total) < 0;
     if (isCredit) {
       total_returned += Math.abs(Number(i.total || 0));
     } else {
@@ -5470,13 +5467,9 @@ function partyStats(partyId, partyType){
     }
   });
 
-  /* ✅ Only count `paid` from REAL invoices — skip credit notes entirely.
-     This prevents phantom "Total Paid" values when the only invoice
-     on file is a return. */
+  // ✅ Fix: Only count `paid` from normal invoices.
   const invoice_paid = invs.reduce((s, i) => {
-    const isCredit =
-      String(i.invoice_no || '').startsWith('RET-') ||
-      Number(i.total) < 0;
+    const isCredit = Number(i.total) < 0;
     if (isCredit) return s;
     return s + Number(i.paid || 0);
   }, 0);
@@ -5484,15 +5477,15 @@ function partyStats(partyId, partyType){
   const extra_paid = pays.reduce((s, p) => s + Number(p.amount || 0), 0);
   const total_paid = invoice_paid + extra_paid;
 
-  /* Net Due = Invoiced − Returns − Paid. Never negative. */
-  const due = Math.max(0, total_invoiced - total_returned - total_paid);
+  // ✅ Fix: Allow negative due (Credit Balance) so math is truthful.
+  const due = total_invoiced - total_returned - total_paid;
 
   return {
-    total_billed:   total_invoiced,   // always ≥ 0
-    total_returned,                   // always ≥ 0
+    total_billed:   total_invoiced,   // always >= 0
+    total_returned,                   // always >= 0
     total_paid,
-    due,
-    invoice_count:  invs.filter(i => !String(i.invoice_no || '').startsWith('RET-')).length,
+    due,                              // can be negative (Credit Balance)
+    invoice_count:  invs.filter(i => Number(i.total) >= 0).length,
     payment_count:  pays.length
   };
 }
@@ -12114,7 +12107,6 @@ async function renderVendorProfile(content, id){
 
 /* ══════════════════════════════════════════════════════════════
    29c — SHARED PARTY PROFILE (customers + retailers)
-   Fixed: KPI cards, credit note display, statement balance color
    ══════════════════════════════════════════════════════════════ */
 async function renderPartyProfile(content, id, type){
   if(!content) return;
@@ -12196,9 +12188,11 @@ async function renderPartyProfile(content, id, type){
         <div class="lbl">Total Paid</div>
         <div class="val" style="color:${st.total_paid > 0 ? 'var(--green)' : 'var(--ink-3)'}">${rs(st.total_paid)}</div>
       </div>
-      <div class="mini-stat" style="background:${st.due > 0 ? 'var(--red-bg)' : 'var(--green-bg)'};border-color:${st.due > 0 ? 'var(--red-border)' : 'var(--green-border)'}">
-        <div class="lbl">Net Due</div>
-        <div class="val" style="color:${st.due > 0 ? 'var(--red)' : 'var(--green)'}">${rs(st.due)}</div>
+      <div class="mini-stat" style="background:${st.due > 0 ? 'var(--red-bg)' : (st.due < 0 ? 'var(--blue-bg)' : 'var(--green-bg)')};border-color:${st.due > 0 ? 'var(--red-border)' : (st.due < 0 ? 'var(--blue-border)' : 'var(--green-border)')}">
+        <div class="lbl">${st.due < 0 ? 'Credit Balance' : 'Net Due'}</div>
+        <div class="val" style="color:${st.due > 0 ? 'var(--red)' : (st.due < 0 ? 'var(--blue)' : 'var(--green)')}">
+          ${rs(st.due)}
+        </div>
       </div>
     </div>
 
@@ -12214,7 +12208,8 @@ async function renderPartyProfile(content, id, type){
           : `
             <div style="display:flex;flex-direction:column;gap:8px">
               ${invoices.slice(0, 12).map(i => {
-                const isCredit = String(i.invoice_no || '').startsWith('RET-') || Number(i.total) < 0;
+                // ✅ Fix: Strictly check negative total for credit note
+                const isCredit = Number(i.total) < 0;
                 const displayTotal = isCredit ? -Math.abs(Number(i.total || 0)) : Number(i.total || 0);
                 return `
                   <div style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);font-size:var(--fs-sm)">
@@ -12277,10 +12272,10 @@ async function renderPartyProfile(content, id, type){
         <small>Running balance</small>
       </div>
       ${(() => {
-        /* Combined timeline — credit notes correctly placed in Credit column */
+        // ✅ Fix: Strictly check negative total for credit note
         const timeline = [
           ...invoices.map(i => {
-            const isCredit = String(i.invoice_no || '').startsWith('RET-') || Number(i.total) < 0;
+            const isCredit = Number(i.total) < 0;
             return {
               date:   txDate(i, 'invoice_date'),
               kind:   isCredit ? 'Credit Note' : 'Invoice',
@@ -12402,21 +12397,6 @@ async function renderPartyProfile(content, id, type){
       route();
     };
   });
-}
-/* ══════════════════════════════════════════════════════════
-   29c-route — CUSTOMER PROFILE
-   ══════════════════════════════════════════════════════════ */
-
-async function renderCustomerProfile(content, id){
-  await renderPartyProfile(content, id, 'customer');
-}
-
-/* ══════════════════════════════════════════════════════════
-   29c-route — RETAILER PROFILE
-   ══════════════════════════════════════════════════════════ */
-
-async function renderRetailerProfile(content, id){
-  await renderPartyProfile(content, id, 'retailer');
 }
 
 /* ══════════════════════════════════════════════════════════
