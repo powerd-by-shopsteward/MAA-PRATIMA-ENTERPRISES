@@ -25019,5 +25019,106 @@ window.SUBSCRIPTION_CONFIG = {
    ══════════════════════════════════════════════════════════════════ */
      
 </script>
+<script>
+/* ══════════════════════════════════════════════════════════════
+   BLOCK 54 — CLOUD BACKUP TO GOOGLE DRIVE (via Cloudflare Worker)
+   Shop: Debasis Maity (Maa Pratima Enterprises)
+   ══════════════════════════════════════════════════════════════ */
+(function(){
+  'use strict';
+
+  var WORKER_URL = 'https://shopsteward-backup.shopsteward-in.workers.dev';  /* ← CHANGE THIS */
+  var SHOP_ID    = 'debasis';
+  var SHOP_KEY   = 'deb-3wq8n5t1';
+
+  var LS_LAST_CLOUD = 'sd_last_cloud_backup_date';
+  var LS_LAST_FAIL  = 'sd_last_cloud_backup_fail';
+  var LS_LAST_OK_AT = 'sd_last_cloud_backup_ok_at';
+
+  function today(){ return new Date().toISOString().slice(0, 10); }
+  function alreadyUploadedToday(){
+    try { return localStorage.getItem(LS_LAST_CLOUD) === today(); } catch(e){ return false; }
+  }
+  function markUploaded(){
+    try { localStorage.setItem(LS_LAST_CLOUD, today()); } catch(e){}
+  }
+
+  function collectPayload(){
+    var payload = {
+      app: 'StationeryDistributorManager',
+      version: (typeof APP_VERSION !== 'undefined' ? APP_VERSION : '1.0.0'),
+      shop_id: SHOP_ID,
+      exported_at: new Date().toISOString(),
+      settings: Object.assign({}, (typeof SETTINGS !== 'undefined' ? SETTINGS : {})),
+    };
+    var TABLES = [
+      'customers','retailers','suppliers','products',
+      'invoices','invoice_items','payments',
+      'supplier_invoices','supplier_invoice_items','supplier_payments',
+      'returns','expenses'
+    ];
+    TABLES.forEach(function(t){
+      payload[t] = (typeof DB !== 'undefined' && Array.isArray(DB[t])) ? DB[t] : [];
+    });
+    return payload;
+  }
+
+  function postToWorker(payload){
+    var url = WORKER_URL + '/?shop=' + encodeURIComponent(SHOP_ID) +
+              '&key=' + encodeURIComponent(SHOP_KEY);
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      keepalive: true,
+    }).then(function(r){
+      return r.json().then(function(j){
+        if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        return j;
+      });
+    });
+  }
+
+  function runCloudBackup(reason){
+    if (alreadyUploadedToday()) return;
+    if (typeof isLoggedIn === 'function' && !isLoggedIn()) return;
+    if (typeof DB === 'undefined') return;
+
+    var payload;
+    try { payload = collectPayload(); }
+    catch(e){ console.warn('[cloud] payload build failed', e); return; }
+
+    postToWorker(payload)
+      .then(function(res){
+        markUploaded();
+        try { localStorage.setItem(LS_LAST_OK_AT, String(Date.now())); } catch(e){}
+        try { localStorage.removeItem(LS_LAST_FAIL); } catch(e){}
+        console.log('[cloud-backup] OK → ' + res.file + ' (' + reason + ')');
+      })
+      .catch(function(err){
+        try { localStorage.setItem(LS_LAST_FAIL, err.message || 'unknown'); } catch(e){}
+        console.warn('[cloud-backup] FAILED:', err.message, '(' + reason + ')');
+      });
+  }
+
+  var _fired = false;
+  setInterval(function(){
+    if (_fired) return;
+    if (window.DB_SYNCED !== true) return;
+    if (typeof isLoggedIn !== 'function' || !isLoggedIn()) return;
+    _fired = true;
+    setTimeout(function(){ runCloudBackup('post-login'); }, 30 * 1000);
+  }, 3000);
+
+  window.CloudBackup = {
+    run:        runCloudBackup,
+    lastOkAt:   function(){ return Number(localStorage.getItem(LS_LAST_OK_AT) || 0); },
+    lastFail:   function(){ return localStorage.getItem(LS_LAST_FAIL); },
+    uploadedOn: function(){ return localStorage.getItem(LS_LAST_CLOUD); },
+  };
+
+  console.log('[cloud-backup] Block 55 ready (debasis)');
+})();
+</script>
 </body>
 </html>
