@@ -25330,6 +25330,308 @@ window.SUBSCRIPTION_CONFIG = {
 /* ══════════════════════════════════════════════════════════════════
    END BLOCK 53 — INVENTORY
    ══════════════════════════════════════════════════════════════════ */
+     <!-- ══════════════════════════════════════════════════════════════════
+     BLOCK 54 — FIRST-TIME QUICK TOUR (ONBOARDING)
+     ══════════════════════════════════════════════════════════════════ -->
+<script>
+(function() {
+  'use strict';
+
+  const TOUR_KEY = 'sd_tour_seen_v1';
+  let currentStep = 0;
+  let tourActive = false;
+
+  // The steps of the tour
+  const steps = [
+    {
+      target: null, // Center screen
+      title: 'Welcome to Stationery Hub! 🎉',
+      text: 'This is your new business manager. Let us take 30 seconds to show you around so you can start billing immediately.',
+      position: 'center'
+    },
+    {
+      target: '.sidebar .nav-group:nth-child(3) .nav a[href="#/products"]', // Catalogue -> Products
+      title: 'Your Catalogue',
+      text: 'Add all your pens, notebooks, and boxes here. The app automatically tracks piece-by-piece and box-by-box stock.',
+      position: 'right'
+    },
+    {
+      target: '#global-search',
+      title: 'Global Search',
+      text: 'Press Ctrl+K (or Cmd+K) anywhere to instantly jump to any customer, invoice, or product without using the menu.',
+      position: 'bottom'
+    },
+    {
+      target: '#btn-calc',
+      title: 'Floating Calculator',
+      text: 'Need to do quick math? Open the calculator. You can even drag it around the screen so it never blocks your view.',
+      position: 'right'
+    },
+    {
+      target: '.page-actions .btn-primary', // The "+ New Invoice" button
+      title: 'Start Billing',
+      text: 'When a customer arrives, click here to create a new invoice. You can print it, send it on WhatsApp, or download a PDF!',
+      position: 'bottom'
+    }
+  ];
+
+  /* ══════════════════════════════════════════════════════════════
+     1. INJECT CSS
+     ══════════════════════════════════════════════════════════════ */
+  function injectTourStyles() {
+    if (document.getElementById('tour-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'tour-styles';
+    style.textContent = `
+      #tour-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 99990; /* SAFE: Below error banner (99999) */
+        pointer-events: none;
+        transition: opacity 0.3s ease;
+        opacity: 0;
+      }
+      #tour-overlay.active {
+        opacity: 1;
+      }
+      .tour-backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(31, 41, 55, 0.65);
+        pointer-events: auto;
+        backdrop-filter: blur(2px);
+        -webkit-backdrop-filter: blur(2px);
+      }
+      .tour-spotlight {
+        position: absolute;
+        border-radius: 8px;
+        box-shadow: 0 0 0 9999px rgba(31, 41, 55, 0.65), 0 0 0 4px var(--primary);
+        transition: all 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+        pointer-events: none;
+        z-index: 99991;
+      }
+      .tour-tooltip {
+        position: absolute;
+        width: 320px;
+        max-width: calc(100vw - 32px); /* SAFE: Mobile responsive */
+        background: var(--card);
+        border: 1px solid var(--border-strong);
+        border-radius: var(--r-lg);
+        padding: 20px;
+        box-shadow: var(--shadow-modal);
+        z-index: 99999;
+        pointer-events: auto;
+        font-family: var(--font);
+        color: var(--ink);
+        transition: all 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .tour-tooltip h3 {
+        font-size: 16px;
+        font-weight: 700;
+        margin-bottom: 8px;
+        color: var(--ink);
+      }
+      .tour-tooltip p {
+        font-size: 13px;
+        color: var(--ink-2);
+        line-height: 1.6;
+        margin-bottom: 20px;
+      }
+      .tour-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .tour-dots {
+        display: flex;
+        gap: 6px;
+      }
+      .tour-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--border-strong);
+        transition: background 0.2s;
+      }
+      .tour-dot.active {
+        background: var(--primary);
+        transform: scale(1.2);
+      }
+      .tour-btns {
+        display: flex;
+        gap: 8px;
+      }
+      .tour-btns button {
+        padding: 6px 12px;
+        font-size: 12px;
+        font-weight: 600;
+        border-radius: var(--r-sm);
+        cursor: pointer;
+        border: 1px solid transparent;
+        transition: all 0.2s;
+      }
+      .tour-btns .skip { color: var(--ink-3); background: transparent; }
+      .tour-btns .skip:hover { color: var(--ink); }
+      .tour-btns .next { background: var(--primary); color: var(--on-primary); }
+      .tour-btns .next:hover { background: var(--primary-hover); }
+    `;
+    document.head.appendChild(style);
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     2. RENDER & POSITIONING
+     ══════════════════════════════════════════════════════════════ */
+  function renderStep() {
+    const step = steps[currentStep];
+    const overlay = document.getElementById('tour-overlay');
+    const backdrop = overlay.querySelector('.tour-backdrop');
+    let spotlight = overlay.querySelector('.tour-spotlight');
+    let tooltip = overlay.querySelector('.tour-tooltip');
+
+    // Tooltip content
+    const dotsHTML = steps.map((_, i) => `<div class="tour-dot ${i === currentStep ? 'active' : ''}"></div>`).join('');
+    const isLast = currentStep === steps.length - 1;
+    
+    tooltip.innerHTML = `
+      <h3>${step.title}</h3>
+      <p>${step.text}</p>
+      <div class="tour-footer">
+        <div class="tour-dots">${dotsHTML}</div>
+        <div class="tour-btns">
+          ${!isLast ? '<button class="skip" id="tour-skip">Skip</button>' : ''}
+          <button class="next" id="tour-next">${isLast ? 'Start Using App' : 'Next →'}</button>
+        </div>
+      </div>
+    `;
+
+    // Wire buttons
+    tooltip.querySelector('#tour-next').onclick = () => { if(isLast) endTour(); else { currentStep++; renderStep(); } };
+    const skipBtn = tooltip.querySelector('#tour-skip');
+    if(skipBtn) skipBtn.onclick = endTour;
+
+    // Positioning logic
+    if (!step.target) {
+      // Center screen (Welcome step)
+      if(spotlight) spotlight.style.display = 'none';
+      tooltip.style.top = '50%';
+      tooltip.style.left = '50%';
+      tooltip.style.transform = 'translate(-50%, -50%)';
+    } else {
+      const el = document.querySelector(step.target);
+      
+      // If element doesn't exist (e.g. hidden on mobile), skip to next step
+      if (!el) { 
+        currentStep++; 
+        if(currentStep < steps.length) renderStep(); 
+        else endTour(); 
+        return; 
+      }
+      
+      if(spotlight) spotlight.style.display = 'block';
+      const rect = el.getBoundingClientRect();
+      
+      // Spotlight position
+      if(spotlight) {
+        spotlight.style.top = (rect.top - 6) + 'px';
+        spotlight.style.left = (rect.left - 6) + 'px';
+        spotlight.style.width = (rect.width + 12) + 'px';
+        spotlight.style.height = (rect.height + 12) + 'px';
+      }
+
+      // Tooltip position
+      const padding = 16;
+      const tooltipRect = { w: tooltip.offsetWidth || 320, h: tooltip.offsetHeight || 160 }; 
+      let top, left;
+
+      if (step.position === 'right') {
+        top = rect.top;
+        left = rect.right + padding;
+      } else if (step.position === 'bottom') {
+        top = rect.bottom + padding;
+        left = rect.left;
+        if (left + tooltipRect.w > window.innerWidth) left = window.innerWidth - tooltipRect.w - padding;
+      } else if (step.position === 'left') {
+        top = rect.top;
+        left = rect.left - tooltipRect.w - padding;
+      } else if (step.position === 'top') {
+        top = rect.top - tooltipRect.h - padding;
+        left = rect.left;
+      }
+
+      // Keep inside viewport
+      top = Math.max(padding, Math.min(top, window.innerHeight - tooltipRect.h - padding));
+      left = Math.max(padding, Math.min(left, window.innerWidth - tooltipRect.w - padding));
+
+      tooltip.style.top = top + 'px';
+      tooltip.style.left = left + 'px';
+      tooltip.style.transform = 'none';
+    }
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     3. START / END
+     ══════════════════════════════════════════════════════════════ */
+  function startTour() {
+    if (tourActive || !isLoggedIn()) return;
+    tourActive = true;
+    currentStep = 0;
+    injectTourStyles();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'tour-overlay';
+    overlay.innerHTML = `
+      <div class="tour-backdrop"></div>
+      <div class="tour-spotlight" style="display:none"></div>
+      <div class="tour-tooltip"></div>
+    `;
+    document.body.appendChild(overlay);
+    
+    // Force reflow for transition
+    setTimeout(() => overlay.classList.add('active'), 50);
+    renderStep();
+  }
+
+  function endTour() {
+    if (!tourActive) return;
+    tourActive = false;
+    localStorage.setItem(TOUR_KEY, '1');
+    
+    const overlay = document.getElementById('tour-overlay');
+    if (overlay) {
+      overlay.classList.remove('active');
+      setTimeout(() => overlay.remove(), 300);
+    }
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     4. THE TRIGGER (Hooked into routing)
+     ══════════════════════════════════════════════════════════════ */
+  const _origRoute = window.route;
+  if (typeof _origRoute === 'function') {
+    window.route = async function() {
+      const res = await _origRoute.apply(this, arguments);
+      
+      // Only show tour if:
+      // 1. User is on dashboard
+      // 2. Data is fully loaded
+      // 3. They haven't seen it before
+      setTimeout(() => {
+        if (isLoggedIn() && window.DB_SYNCED === true && !localStorage.getItem(TOUR_KEY)) {
+           startTour();
+        }
+      }, 1200); // Wait 1.2s for UI to settle
+      
+      return res;
+    };
+  }
+
+  // Expose a way to test it manually
+  window.restartTour = function() {
+    localStorage.removeItem(TOUR_KEY);
+    location.reload();
+  };
+  
+})();
      
 </script>
 </body>
