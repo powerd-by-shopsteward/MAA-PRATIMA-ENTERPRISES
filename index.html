@@ -2585,7 +2585,7 @@ html[data-reduce-effects="true"] .toast::before{
 }
 
 /* ══════════════════════════════════════════════════════════════
-   7c — CALCULATOR : floating sticky-note
+   7c — CALCULATOR : draggable floating sticky-note
    ══════════════════════════════════════════════════════════════ */
 
 .calc{
@@ -2593,19 +2593,42 @@ html[data-reduce-effects="true"] .toast::before{
   bottom: var(--sp-7);
   right: var(--sp-7);
   width: 288px;
+  min-width: 260px;
+  max-width: calc(100vw - 24px);
+  box-sizing: border-box;
   padding: var(--sp-4);
   background: var(--card);
   border: 1px solid var(--border-strong);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-modal);
-  z-index: var(--z-calc);
+  z-index: var(--z-calc);           /* 9500 — on top of everything */
   animation: modalFlick var(--dur-slow) var(--ease-paper);
+  flex-shrink: 0;
+  overscroll-behavior: contain;
+}
+
+/* When JS has pinned it to an absolute left/top */
+.calc.calc-free-pos{
+  bottom: auto;
+  right: auto;
+}
+
+/* While the user is actively dragging */
+.calc.calc-dragging{
+  transition: none !important;
+  animation: none !important;
+  cursor: grabbing !important;
+  box-shadow:
+    0 20px 60px rgba(31,41,55,0.28),
+    0 8px 24px rgba(199,154,40,0.18);
+  opacity: 0.96;
 }
 
 html[data-reduce-effects="true"] .calc{
   animation: none;
 }
 
+/* ─── HEADER : drag handle ──────────────────────────────────── */
 .calc-head{
   display: flex;
   justify-content: space-between;
@@ -2614,13 +2637,37 @@ html[data-reduce-effects="true"] .calc{
   font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
   color: var(--ink);
+  gap: var(--sp-2);
+  cursor: move;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  padding: 3px 4px;
+  margin-left: -4px;
+  margin-right: -4px;
+  border-radius: var(--r-xs);
+  transition: background var(--dur-fast) var(--ease);
 }
 
+.calc-head:hover{
+  background: rgba(199, 154, 40, 0.07);
+}
+
+.calc-head:active{
+  background: rgba(199, 154, 40, 0.12);
+}
+
+.calc-head button{
+  cursor: pointer;
+  touch-action: auto;
+}
+
+/* ─── DISPLAY ─────────────────────────────────────────────── */
 .calc-display{
   background: var(--card-alt);
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
-  padding: var(--sp-4);
+  padding: var(--sp-3) var(--sp-4);
   text-align: right;
   font-family: var(--font-mono);
   font-size: 20px;
@@ -2628,27 +2675,32 @@ html[data-reduce-effects="true"] .calc{
   color: var(--ink);
   margin-bottom: var(--sp-3);
   overflow-x: auto;
+  overflow-y: hidden;
   white-space: nowrap;
   box-shadow: var(--shadow-inset-paper);
   font-variant-numeric: tabular-nums;
   min-height: 52px;
+  max-height: 52px;
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-shrink: 0;
 }
 
 .calc-display::-webkit-scrollbar{
   height: 4px;
 }
 
+/* ─── KEYS : grid + pop ───────────────────────────────────── */
 .calc-keys{
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
 }
 
 .calc-keys button{
-  padding: 12px 0;
+  padding: 12px 4px;
+  min-width: 0;
   font-size: var(--fs-md);
   font-weight: var(--fw-semibold);
   color: var(--ink);
@@ -2658,10 +2710,16 @@ html[data-reduce-effects="true"] .calc{
   cursor: pointer;
   transition:
     background var(--dur-fast) var(--ease),
-    transform var(--dur-fast) var(--ease-paper),
-    box-shadow var(--dur-fast) var(--ease);
+    transform 80ms var(--ease-paper),
+    box-shadow 80ms var(--ease);
   box-shadow: 0 1px 0 rgba(31,41,55,0.03);
   font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
 }
 
 .calc-keys button:hover{
@@ -2671,8 +2729,22 @@ html[data-reduce-effects="true"] .calc{
 }
 
 .calc-keys button:active{
-  transform: translateY(1px);
-  box-shadow: inset 0 1px 2px rgba(0,0,0,0.08);
+  transform: scale(0.92);
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.14);
+  transition: transform 60ms ease;
+}
+
+/* Pop animation — triggered from JS for both pointer + keyboard */
+@keyframes calcKeyPop{
+  0%   { transform: scale(0.88); }
+  55%  { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+.calc-keys button.calc-pop{
+  animation: calcKeyPop 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  background: var(--primary-soft);
+  border-color: var(--primary-tint);
 }
 
 .calc-keys button.op{
@@ -2689,18 +2761,81 @@ html[data-reduce-effects="true"] .calc{
   background: var(--primary-active);
 }
 
+.calc-keys button.op.calc-pop{
+  background: var(--primary-hover);
+}
+
 html[data-reduce-effects="true"] .calc-keys button:hover,
 html[data-reduce-effects="true"] .calc-keys button:active{
   transform: none;
 }
 
-@media (max-width: 480px){
+/* ─── RESPONSIVE ──────────────────────────────────────────── */
+
+@media (min-width: 481px) and (max-width: 900px){
   .calc{
-    left: var(--sp-4);
-    right: var(--sp-4);
-    bottom: var(--sp-4);
-    width: auto;
+    width: 300px;
   }
+}
+
+@media (max-width: 900px){
+  .calc{
+    bottom: calc(80px + env(safe-area-inset-bottom));
+  }
+}
+
+/* Small phone — full-width, drag disabled */
+@media (max-width: 480px){
+  .calc,
+  .calc.calc-free-pos{
+    left: var(--sp-3) !important;
+    right: var(--sp-3) !important;
+    top: auto !important;
+    bottom: calc(80px + env(safe-area-inset-bottom)) !important;
+    width: auto !important;
+    max-width: none !important;
+    padding: var(--sp-3);
+  }
+
+  .calc-head{
+    cursor: default;
+    touch-action: auto;
+  }
+
+  .calc-display{
+    font-size: 18px;
+    min-height: 46px;
+    max-height: 46px;
+  }
+
+  .calc-keys button{
+    padding: 11px 2px;
+    font-size: var(--fs-base);
+  }
+}
+
+@media (max-width: 360px){
+  .calc-keys{ gap: 5px; }
+  .calc-keys button{ padding: 9px 0; font-size: var(--fs-sm); }
+}
+
+/* Landscape mobile — top-anchored, scrollable */
+@media (max-height: 520px) and (orientation: landscape){
+  .calc,
+  .calc.calc-free-pos{
+    top: 8px !important;
+    bottom: auto !important;
+    max-height: calc(100vh - 16px);
+    overflow-y: auto;
+    padding: 8px;
+  }
+  .calc-head{ margin-bottom: 4px; font-size: var(--fs-xs); }
+  .calc-display{
+    min-height: 34px; max-height: 34px;
+    font-size: 15px; margin-bottom: 6px; padding: 6px 10px;
+  }
+  .calc-keys{ gap: 4px; }
+  .calc-keys button{ padding: 5px 2px; font-size: 12px; }
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -8765,6 +8900,9 @@ let _calcOpen      = false;
 let _calcExpr      = '0';
 let _calcMemory    = 0;
 let _calcLastField = null;
+let _calcPosition    = null;   /* { left, top } in px, or null */
+let _calcDragState   = null;   /* { startX, startY, origLeft, origTop, pointerId } */
+const CALC_POS_KEY   = 'sd_calc_pos_v1';
 
 /* ══════════════════════════════════════════════════════════════
    23a — SAFE EXPRESSION EVALUATOR
@@ -8890,7 +9028,140 @@ function calcMemoryClear(){
   _calcMemory = 0;
   toast('Memory cleared', 'info');
 }
+/* ══════════════════════════════════════════════════════════════
+   23k — DRAG + POSITION HELPERS
+   ══════════════════════════════════════════════════════════════ */
 
+function loadCalcPosition(){
+  try {
+    const raw = localStorage.getItem(CALC_POS_KEY);
+    if(!raw) return null;
+    const p = JSON.parse(raw);
+    if(typeof p.left !== 'number' || typeof p.top !== 'number') return null;
+    return p;
+  } catch(e){ return null; }
+}
+
+function saveCalcPosition(pos){
+  try { localStorage.setItem(CALC_POS_KEY, JSON.stringify(pos)); } catch(e){}
+}
+
+/* Keeps the calc on-screen even if the user drags it out of bounds,
+   or if the window shrinks after a drag. */
+function clampCalcPosition(pos, w, h){
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const headerH     = 44;     /* keep the drag handle reachable */
+  const minVisibleX = 60;     /* keep a sliver of the window on-screen */
+
+  return {
+    left: Math.max(-w + minVisibleX, Math.min(vw - minVisibleX, pos.left)),
+    top:  Math.max(0,                Math.min(vh - headerH,     pos.top))
+  };
+}
+
+/* Applies the current _calcPosition to the box, or computes a
+   default bottom-right position if none exists. */
+function applyCalcPosition(box){
+  if(!box) return;
+
+  const isMobile = window.innerWidth <= 480;
+  if(isMobile){
+    /* Mobile: CSS owns the position — strip free-pos class */
+    box.classList.remove('calc-free-pos');
+    box.style.left = '';
+    box.style.top  = '';
+    return;
+  }
+
+  const w = box.offsetWidth;
+  const h = box.offsetHeight;
+
+  if(!_calcPosition){
+    _calcPosition = {
+      left: window.innerWidth  - w - 20,
+      top:  window.innerHeight - h - 20
+    };
+  }
+
+  _calcPosition = clampCalcPosition(_calcPosition, w, h);
+
+  box.classList.add('calc-free-pos');
+  box.style.left = _calcPosition.left + 'px';
+  box.style.top  = _calcPosition.top  + 'px';
+}
+
+/* Wires pointer-based dragging on the calc header. */
+function setupCalcDrag(box){
+  const head = box.querySelector('.calc-head');
+  if(!head) return;
+
+  head.addEventListener('pointerdown', (e) => {
+    /* Don't start drag when pressing the close button */
+    if(e.target.closest('button')) return;
+    if(window.innerWidth <= 480) return;    /* mobile: no drag */
+
+    e.preventDefault();
+    const rect = box.getBoundingClientRect();
+
+    _calcDragState = {
+      startX: e.clientX,
+      startY: e.clientY,
+      origLeft: rect.left,
+      origTop:  rect.top,
+      pointerId: e.pointerId
+    };
+
+    box.classList.add('calc-dragging');
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'grabbing';
+
+    try { head.setPointerCapture(e.pointerId); } catch(err){}
+  });
+
+  head.addEventListener('pointermove', (e) => {
+    if(!_calcDragState) return;
+    if(e.pointerId !== _calcDragState.pointerId) return;
+
+    const dx = e.clientX - _calcDragState.startX;
+    const dy = e.clientY - _calcDragState.startY;
+
+    let next = {
+      left: _calcDragState.origLeft + dx,
+      top:  _calcDragState.origTop  + dy
+    };
+    next = clampCalcPosition(next, box.offsetWidth, box.offsetHeight);
+
+    box.style.left = next.left + 'px';
+    box.style.top  = next.top  + 'px';
+    _calcPosition  = next;
+  });
+
+  const endDrag = (e) => {
+    if(!_calcDragState) return;
+    if(e && e.pointerId != null && e.pointerId !== _calcDragState.pointerId) return;
+
+    try { head.releasePointerCapture(_calcDragState.pointerId); } catch(err){}
+
+    _calcDragState = null;
+    box.classList.remove('calc-dragging');
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+
+    if(_calcPosition) saveCalcPosition(_calcPosition);
+  };
+
+  head.addEventListener('pointerup', endDrag);
+  head.addEventListener('pointercancel', endDrag);
+}
+
+/* Re-clamps the saved position on window resize / orientation change */
+function handleCalcResize(){
+  if(!_calcOpen) return;
+  const box = document.getElementById('calc-box');
+  if(!box) return;
+  applyCalcPosition(box);
+}
 /* ══════════════════════════════════════════════════════════════
    23d — SEND TO FIELD
    Drops the current result into the last non-calc input the user
@@ -9035,6 +9306,9 @@ function renderCalc(){
     };
     document.addEventListener('click', outsideHandler);
   }, 50);
+     /* Apply saved / default position, then wire dragging */
+  applyCalcPosition(box);
+  setupCalcDrag(box);
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -9084,6 +9358,20 @@ function handleCalcKey(k){
       }
   }
 
+  /* Visual pop feedback for both pointer clicks and keyboard */
+  try {
+    const btns = document.querySelectorAll('.calc-keys button');
+    for(const b of btns){
+      if(b.dataset.k === k){
+        b.classList.remove('calc-pop');
+        void b.offsetWidth;             /* restart animation */
+        b.classList.add('calc-pop');
+        setTimeout(() => b.classList.remove('calc-pop'), 260);
+        break;
+      }
+    }
+  } catch(e){}
+     
   /* Re-render display */
   const display = document.getElementById('calc-display');
   if(display){
@@ -9149,14 +9437,14 @@ function openCalc(){
   if(_calcOpen) return;
   _calcOpen = true;
 
-  /* Snapshot the last non-calc field the user focused, so "Send"
-     has a target. */
+  /* Restore last dragged position */
+  _calcPosition = loadCalcPosition();
+
+  /* Snapshot the last non-calc field the user focused (for "Send") */
   const a = document.activeElement;
   if(a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')){
     _calcLastField = a;
   } else {
-    /* Try the last input/textarea that had focus — approximate
-       by looking for a visible input inside the current page. */
     const anyField = document.querySelector('#content input:not([type="hidden"]), #content textarea');
     _calcLastField = anyField || null;
   }
@@ -9167,6 +9455,18 @@ function openCalc(){
 function closeCalc(){
   if(!_calcOpen) return;
   _calcOpen = false;
+
+  /* Cancel any in-progress drag */
+  _calcDragState = null;
+  document.body.style.userSelect = '';
+  document.body.style.cursor = '';
+
+  /* Detach outside-click listener */
+  if(typeof _calcOutsideHandler !== 'undefined' && _calcOutsideHandler){
+    document.removeEventListener('click', _calcOutsideHandler);
+    _calcOutsideHandler = null;
+  }
+
   const root = document.getElementById('calc-root');
   if(root) root.innerHTML = '';
 }
@@ -9202,6 +9502,8 @@ window.toggleCalc = toggleCalc;
 window.openCalc   = openCalc;
 window.closeCalc  = closeCalc;
 
+window.addEventListener('resize', handleCalcResize);
+window.addEventListener('orientationchange', () => setTimeout(handleCalcResize, 100));
 /* ══════════════════════════════════════════════════════════════
    END BLOCK 23
    ══════════════════════════════════════════════════════════════ */
