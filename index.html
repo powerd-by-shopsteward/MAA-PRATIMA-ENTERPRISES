@@ -20251,9 +20251,10 @@ window.USBPrinter = (function(){
 
       /* Save paper width from last choice (default 58mm) */
       const saved = localStorage.getItem('sd_usb_paper');
-      if(saved === '80'){ paperWidth = 48; paperLabel = '80mm'; }
-      else { paperWidth = 32; paperLabel = '58mm'; }
-
+if(saved === '80'){ paperWidth = 48; paperLabel = '80mm'; }
+else if(saved === '58'){ paperWidth = 32; paperLabel = '58mm'; }
+else { paperWidth = 32; paperLabel = '55mm'; }   // ← default is now 55mm
+         
       toast('USB printer connected (' + paperLabel + ')', 'success');
       return true;
     } catch(err){
@@ -20490,9 +20491,10 @@ window.USBPrinter = (function(){
     try {
       /* Load last saved paper width for consistency */
       const saved = localStorage.getItem('sd_usb_paper');
-      if(saved === '80'){ paperWidth = 48; paperLabel = '80mm'; }
-      else { paperWidth = 32; paperLabel = '58mm'; }
-
+if(saved === '80'){ paperWidth = 48; paperLabel = '80mm'; }
+else if(saved === '58'){ paperWidth = 32; paperLabel = '58mm'; }
+else { paperWidth = 32; paperLabel = '55mm'; }   // ← default is now 55mm
+         
       const bytes = await buildReceipt(inv, items, party);
       await rawPrint(bytes);
       toast('Sent to USB printer', 'success');
@@ -20513,10 +20515,14 @@ window.USBPrinter = (function(){
       paperWidth = 48;
       paperLabel = '80mm';
       localStorage.setItem('sd_usb_paper', '80');
-    } else {
+    } else if(mm === 58){
       paperWidth = 32;
       paperLabel = '58mm';
       localStorage.setItem('sd_usb_paper', '58');
+    } else {
+      paperWidth = 32;
+      paperLabel = '55mm';
+      localStorage.setItem('sd_usb_paper', '55');
     }
     toast('USB paper width: ' + paperLabel, 'success');
   }
@@ -20659,8 +20665,9 @@ window.BluetoothPrinter = (function(){
 
       /* Load saved paper width */
       const saved = localStorage.getItem('sd_bt_paper');
-      if(saved === '80'){ paperWidth = 48; paperLabel = '80mm'; }
-      else { paperWidth = 32; paperLabel = '58mm'; }
+if(saved === '80'){ paperWidth = 48; paperLabel = '80mm'; }
+else if(saved === '58'){ paperWidth = 32; paperLabel = '58mm'; }
+else { paperWidth = 32; paperLabel = '55mm'; }   // ← default is now 55mm
 
       toast('Bluetooth printer connected (' + paperLabel + ')', 'success');
       return true;
@@ -20883,8 +20890,9 @@ window.BluetoothPrinter = (function(){
     try {
       /* Refresh paper width from preference */
       const saved = localStorage.getItem('sd_bt_paper');
-      if(saved === '80'){ paperWidth = 48; paperLabel = '80mm'; }
-      else { paperWidth = 32; paperLabel = '58mm'; }
+if(saved === '80'){ paperWidth = 48; paperLabel = '80mm'; }
+else if(saved === '58'){ paperWidth = 32; paperLabel = '58mm'; }
+else { paperWidth = 32; paperLabel = '55mm'; }   // ← default is now 55mm
 
       const bytes = await buildReceipt(inv, items, party);
       await printer.print(bytes);
@@ -20906,14 +20914,17 @@ window.BluetoothPrinter = (function(){
       paperWidth = 48;
       paperLabel = '80mm';
       localStorage.setItem('sd_bt_paper', '80');
-    } else {
+    } else if(mm === 58){
       paperWidth = 32;
       paperLabel = '58mm';
       localStorage.setItem('sd_bt_paper', '58');
+    } else {
+      paperWidth = 32;
+      paperLabel = '55mm';
+      localStorage.setItem('sd_bt_paper', '55');
     }
     toast('Bluetooth paper width: ' + paperLabel, 'success');
   }
-
   function getPaperWidth(){
     return paperLabel;
   }
