@@ -5968,38 +5968,63 @@ function rangeForPreset(preset, customFrom, customTo){
    error aggregation. A failed table never wipes its DB array.
    ══════════════════════════════════════════════════════════════ */
 
+     /* ══════════════════════════════════════════════════════════════
+   PAGINATED FETCH — bypasses Supabase's 1000-row cap
+   ══════════════════════════════════════════════════════════════ */
+async function fetchAllRows(table, orderBy){
+  const PAGE = 1000;
+  const out  = [];
+  let from = 0;
+  for(let safety = 0; safety < 200; safety++){
+    let q = sb.from(table).select('*').range(from, from + PAGE - 1);
+    if(orderBy){
+      q = q.order(orderBy.col, { ascending: !!orderBy.asc });
+    }
+    const { data, error } = await q;
+    if(error){ console.error('[fetchAllRows] ' + table + ':', error); break; }
+    if(!data || !data.length) break;
+    out.push(...data);
+    if(data.length < PAGE) break;
+    from += data.length;
+  }
+  return out;
+}
+
 /* ══════════════════════════════════════════════════════════════
    15a — syncDB : FETCH ALL TABLES
    ══════════════════════════════════════════════════════════════ */
 
 async function syncDB(){
   /* ─── Table query map ───────────────────────────────────── */
-  const build = {
-    customers:               () => sb.from('customers').select('*').order('created_at', { ascending: false }),
-    retailers:               () => sb.from('retailers').select('*').order('created_at', { ascending: false }),
+    const build = {
+    customers:               () => fetchAllRows('customers',               { col:'created_at',    asc:false }),
+    retailers:               () => fetchAllRows('retailers',               { col:'created_at',    asc:false }),
 
-    suppliers:               () => sb.from('suppliers').select('*').order('name'),
+    suppliers:               () => fetchAllRows('suppliers',               { col:'name',          asc:true  }),
 
-    products:                () => sb.from('products').select('*').order('name'),
+    products:                () => fetchAllRows('products',                { col:'name',          asc:true  }),
 
-    invoices:                () => sb.from('invoices').select('*').order('invoice_date', { ascending: false }),
-    invoice_items:           () => sb.from('invoice_items').select('*'),
+    invoices:                () => fetchAllRows('invoices',                { col:'invoice_date',  asc:false }),
+    invoice_items:           () => fetchAllRows('invoice_items'),
 
-    payments:                () => sb.from('payments').select('*').order('payment_date', { ascending: false }),
+    payments:                () => fetchAllRows('payments',                { col:'payment_date',  asc:false }),
 
-    supplier_invoices:       () => sb.from('supplier_invoices').select('*').order('bill_date', { ascending: false }),
-    supplier_invoice_items:  () => sb.from('supplier_invoice_items').select('*'),
-    supplier_payments:       () => sb.from('supplier_payments').select('*').order('payment_date', { ascending: false }),
+    supplier_invoices:       () => fetchAllRows('supplier_invoices',       { col:'bill_date',     asc:false }),
+    supplier_invoice_items:  () => fetchAllRows('supplier_invoice_items'),
+    supplier_payments:       () => fetchAllRows('supplier_payments',       { col:'payment_date',  asc:false }),
 
-    returns:                 () => sb.from('returns').select('*').order('return_date', { ascending: false }),
+    returns:                 () => fetchAllRows('returns',                 { col:'return_date',   asc:false }),
 
-    expenses:                () => sb.from('expenses').select('*').order('expense_date', { ascending: false })
+    expenses:                () => fetchAllRows('expenses',                { col:'expense_date',  asc:false })
   };
 
-  async function fetchOne(name){
-    const res = await build[name]();
-    if(res.error) throw new Error(name + ' — ' + res.error.message);
-    return res.data || [];
+    async function fetchOne(name){
+    try {
+      const rows = await build[name]();
+      return Array.isArray(rows) ? rows : [];
+    } catch(e){
+      throw new Error(name + ' — ' + (e && e.message ? e.message : String(e)));
+    }
   }
 
   const names  = Object.keys(build);
